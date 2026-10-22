@@ -130,7 +130,7 @@ Pela linha de comando do Turso, o mesmo é: `turso db create rota-gaucha`, `turs
 
 1. Recarregue a planilha e rode **🚚 Rota Gaúcha › Configurar sistema**: senha do painel, chave do Google Maps, URL e token do Turso. No fim ele cria as tabelas e mostra "Banco conectado".
 2. Opcional: **🚚 Rota Gaúcha › Importar _GeoCache da versão 3** e cole o link da planilha da 3.0. Os endereços já conhecidos não precisam ser geocodificados de novo.
-3. Use **🚚 Rota Gaúcha › Obter links de acesso** para abrir o painel.
+3. Abra o painel pela **URL do app da Web** (termina em `/exec`) com `?page=painel` no final. Depois da primeira vez, **🚚 Rota Gaúcha › Obter links de acesso** também mostra esse link.
 
 ### Coletor de dados
 
@@ -150,7 +150,7 @@ Precisa de Node.js 22 ou mais novo (só para quem desenvolve; o sistema em si n�
 
 ```
 npm install
-npm test             # backend: 26 testes com um Turso simulado em SQLite
+npm test             # backend: 27 testes com um Turso simulado em SQLite
 npm run test:telas   # telas no Chromium, com capturas em testes/capturas/
 ```
 
@@ -171,6 +171,7 @@ npm run test:telas   # telas no Chromium, com capturas em testes/capturas/
 | `TURSO_URL` | URL do banco (`libsql://...turso.io`) |
 | `TURSO_TOKEN` | Token do banco |
 | `ENDERECO_PARTIDA` | Opcional, troca o ponto de partida |
+| `WEBAPP_URL` | Endereço publicado (`/exec`), guardado sozinho na primeira vez que o sistema é aberto. O menu da planilha usa ele, porque fora do web app o Apps Script devolve o endereço de teste (`/dev`), que falha com mais de uma conta Google logada |
 
 ## Convenções do código
 

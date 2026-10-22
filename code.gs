@@ -47,7 +47,8 @@ const PROP = {
   TOKEN_SEGREDO: 'TOKEN_SEGREDO',
   ENDERECO_PARTIDA: 'ENDERECO_PARTIDA',
   TURSO_URL: 'TURSO_URL',
-  TURSO_TOKEN: 'TURSO_TOKEN'
+  TURSO_TOKEN: 'TURSO_TOKEN',
+  WEBAPP_URL: 'WEBAPP_URL'
 };
 
 // Perfis de link: cada um tem um token diferente para a mesma carga
@@ -72,6 +73,22 @@ function obterMapsApiKey_() {
 
 function obterEnderecoPartida_() {
   return obterPropriedade_(PROP.ENDERECO_PARTIDA) || CONFIG.ENDERECO_PARTIDA_PADRAO;
+}
+
+/**
+ * urlWebApp_ - Endereço publicado do web app (termina em /exec)
+ * Fora do web app (menu da planilha, editor) o Apps Script devolve o
+ * endereço de teste (/dev), que só abre para o dono e falha quando há mais
+ * de uma conta Google logada no navegador. Por isso o /exec é guardado
+ * na primeira vez que alguém abre o sistema publicado.
+ */
+function urlWebApp_() {
+  const atual = ScriptApp.getService().getUrl() || '';
+  if (/\/exec$/.test(atual)) {
+    if (obterPropriedade_(PROP.WEBAPP_URL) !== atual) salvarPropriedade_(PROP.WEBAPP_URL, atual);
+    return atual;
+  }
+  return obterPropriedade_(PROP.WEBAPP_URL) || atual;
 }
 
 // ============= SEGURANÇA: TOKENS DOS LINKS =============
@@ -129,7 +146,7 @@ function exigirToken_(numeroCarga, token, perfil) {
  * Link do motorista para uma carga
  */
 function gerarLinkMotorista_(numeroCarga) {
-  return ScriptApp.getService().getUrl() + '?carga=' + encodeURIComponent(numeroCarga) +
+  return urlWebApp_() + '?carga=' + encodeURIComponent(numeroCarga) +
          '&token=' + gerarToken_(numeroCarga, PERFIL.MOTORISTA);
 }
 
@@ -137,7 +154,7 @@ function gerarLinkMotorista_(numeroCarga) {
  * Link do coletor (vai dentro do QR code)
  */
 function gerarLinkCarregamento_(numeroCarga) {
-  return ScriptApp.getService().getUrl() + '?page=carregamento&carga=' + encodeURIComponent(numeroCarga) +
+  return urlWebApp_() + '?page=carregamento&carga=' + encodeURIComponent(numeroCarga) +
          '&token=' + gerarToken_(numeroCarga, PERFIL.CARREGAMENTO);
 }
 
@@ -212,6 +229,7 @@ function registrarLog_(numeroCarga, tokenValido, perfil) {
 function doGet(e) {
   const parametros = (e && e.parameter) || {};
   const page = parametros.page || 'motorista';
+  urlWebApp_(); // guarda o endereço /exec para o menu da planilha
 
   if (page === 'painel' || page === 'admin') {
     return HtmlService.createTemplateFromFile('PainelControle')
@@ -259,7 +277,7 @@ function doGet(e) {
 function obterURLPagina(pagina) {
   const permitidas = ['painel', 'api'];
   const destino = permitidas.indexOf(pagina) !== -1 ? pagina : 'painel';
-  return ScriptApp.getService().getUrl() + '?page=' + destino;
+  return urlWebApp_() + '?page=' + destino;
 }
 
 /**
@@ -292,10 +310,17 @@ function onOpen() {
  */
 function MENU_obterLinks() {
   const ui = SpreadsheetApp.getUi();
-  const baseURL = ScriptApp.getService().getUrl();
+  const baseURL = urlWebApp_();
 
   if (!baseURL) {
     ui.alert('O Web App ainda não foi implantado. Use Implantar > Nova implantação no editor do Apps Script.');
+    return;
+  }
+  if (!/\/exec$/.test(baseURL)) {
+    ui.alert('Link do painel ainda não conhecido',
+      'No editor do Apps Script, clique em Implantar > Gerenciar implantações e copie a "URL do app da Web" (termina em /exec). ' +
+      'Abra essa URL com ?page=painel no final, uma vez. Depois disso este menu passa a mostrar o link certo.',
+      ui.ButtonSet.OK);
     return;
   }
 

@@ -149,7 +149,7 @@ As chaves estrangeiras também têm `ON DELETE CASCADE`, mas a exclusão não de
 
 | Comando | O que testa |
 |---------|-------------|
-| `npm test` | 26 testes do backend. Os arquivos `.gs` reais rodam no Node com os serviços do Google simulados e um Turso falso (SQLite em memória falando o mesmo protocolo HTTP) |
+| `npm test` | 27 testes do backend. Os arquivos `.gs` reais rodam no Node com os serviços do Google simulados e um Turso falso (SQLite em memória falando o mesmo protocolo HTTP) |
 | `npm run test:telas` | As telas no Chromium: motorista gera o QR (o teste decodifica o QR e confere o link), rota travada, coletor confere a carga inteira com leitor simulado, queda de internet, painel (destravar rota) e exclusão. Salva capturas em `testes/capturas/` |
 
 ## 11. Próximas fases (sugestões)

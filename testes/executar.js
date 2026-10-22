@@ -400,6 +400,15 @@ teste('sem segredo dos links nenhum token é aceito', function() {
   assert.ok(!amb.gas.MOTORISTA_buscarCarga('C100', amb.tokenMotorista).sucesso);
 });
 
+teste('links usam o endereço /exec mesmo quando o Apps Script devolve /dev', function() {
+  const amb = comCarga();
+  amb.gas.urlWebApp_();
+  amb.gas.ScriptApp.getService = function() { return { getUrl: function() { return 'https://script.google.com/macros/s/OUTRO/dev'; } }; };
+  assert.strictEqual(amb.gas.urlWebApp_(), 'https://script.google.com/macros/s/TESTE/exec');
+  assert.ok(/\/exec\?page=carregamento/.test(amb.gas.gerarLinkCarregamento_('C100')));
+  assert.ok(/\/exec\?page=painel$/.test(amb.gas.obterURLPagina('painel')));
+});
+
 teste('importar _GeoCache da versão 3', function() {
   const amb = criarAmbiente();
   amb.configurar();
