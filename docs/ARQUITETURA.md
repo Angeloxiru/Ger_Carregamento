@@ -18,6 +18,7 @@ O repositório `Ger_roteirizacao` (versão 3.0) continua em produção e serviu 
 | Plataforma | Google Apps Script (igual à 3.0) | Mesma implantação, sem conta nova, geocodificação continua gratuita pelo Apps Script |
 | Banco | Turso (libSQL) pela API HTTP | O carregamento grava muito mais que a roteirização (um registro por bipe). No Sheets cada gravação leva de 1 a 3 s e entra em fila; o Turso tem tabelas, views e transações |
 | Planilha | Fica só com o menu de configuração | Nenhum dado de carga mora mais nela |
+| Pasta do Drive | `CargasCarregamento` (a 3.0 usa `CargasEmRota`) | Definido pelo usuário: os dois sistemas rodam na mesma conta Google sem um excluir as cargas do outro |
 | Código lido | `cEANTrib` do item | Definido pelo usuário |
 | Quantidade | `qTrib` (quantidade tributável), sempre em unidades inteiras | Definido pelo usuário: a operação não trabalha com itens vendidos por peso |
 | Rota depois do carregamento | Travada ao tocar em **Carregar**; só o painel destrava | Definido pelo usuário: a ordem do caminhão não pode mudar depois de carregado |
@@ -40,7 +41,7 @@ O repositório `Ger_roteirizacao` (versão 3.0) continua em produção e serviu 
      Cargas.gs · XMLProcessor.gs · Geo.gs · Turso.gs · Schema.gs
           │                    │                         │
      Turso (HTTPS)       Google Drive              Maps do Apps Script
-  dados de tudo       XMLs em CargasEmRota      geocodificação (cota do Apps Script)
+  dados de tudo       XMLs em CargasCarregamento geocodificação (cota do Apps Script)
 ```
 
 ## 4. Fluxo completo

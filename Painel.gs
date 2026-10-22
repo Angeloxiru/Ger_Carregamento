@@ -6,7 +6,7 @@
 // ============= SINCRONIZAÇÃO DRIVE ↔ BANCO =============
 
 /**
- * PAINEL_atualizarCargas - Sincroniza pasta "CargasEmRota" com o banco
+ * PAINEL_atualizarCargas - Sincroniza pasta "CargasCarregamento" com o banco
  * @param {String} senha - Senha do painel
  */
 function PAINEL_atualizarCargas(senha) {

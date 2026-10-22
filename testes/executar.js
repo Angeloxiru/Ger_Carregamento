@@ -375,7 +375,7 @@ teste('excluir a carga apaga tudo dela no banco (e só dela)', function() {
 teste('sincronização remove do banco a carga cuja pasta saiu do Drive', function() {
   const amb = comCarga();
   amb.gas.PAINEL_uploadXMLs(SENHA, 'C200', arquivosBase64([NOTAS[0]]));
-  const raiz = amb.gas.DriveApp.getFoldersByName('CargasEmRota').next();
+  const raiz = amb.gas.DriveApp.getFoldersByName('CargasCarregamento').next();
   raiz.getFoldersByName('C100').next().setTrashed(true);
   const r = amb.gas.PAINEL_atualizarCargas(SENHA);
   assert.ok(r.sucesso, r.erro);

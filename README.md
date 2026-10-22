@@ -31,7 +31,7 @@ Evolução do [Ger_roteirizacao](https://github.com/Angeloxiru/Ger_roteirizacao)
 
 ## Funcionalidades
 
-- **Importação de XML NF-e**: upload pelo painel (UTF-8 e ISO-8859-1) ou pasta `CargasEmRota` no Drive. Se a carga já existir, as NFs novas são acrescentadas sem perder o status das antigas.
+- **Importação de XML NF-e**: upload pelo painel (UTF-8 e ISO-8859-1) ou pasta `CargasCarregamento` no Drive (separada da pasta `CargasEmRota` da versão 3, para os dois sistemas rodarem na mesma conta sem interferir um no outro). Se a carga já existir, as NFs novas são acrescentadas sem perder o status das antigas.
 - **Roteirização sem custo**: ordem das cidades e, dentro de cada cidade, ordem por proximidade (vizinho mais próximo + 2-opt + or-opt). Entregas no mesmo endereço viram uma parada só.
 - **Tela do motorista**: próxima parada em destaque, **Entregue** com desfazer, reordenação com ▲▼, **Recalcular**, **Maps** com as próximas 4 paradas, aviso de "Cobrar à vista" e de "Local aproximado", e o botão **Carregar** com o QR code e o andamento da conferência (a partir daí a rota fica travada).
 - **Tela do coletor**: notas na ordem inversa da rota, leitura por leitor de código de barras (o leitor "digita" o código e aperta Enter), teclado opcional para digitar, desfazer a última leitura, lista de notas, tela mantida acesa.
@@ -58,7 +58,7 @@ Evolução do [Ger_roteirizacao](https://github.com/Angeloxiru/Ger_roteirizacao)
 └────────────────────────────────────────────────────────────────────────────┘
         │                        │                         │
    Turso (libSQL)           Google Drive          Maps do Apps Script
- todos os dados         XMLs (CargasEmRota)     geocodificação gratuita
+ todos os dados         XMLs (CargasCarregamento) geocodificação gratuita
 ```
 
 Detalhes, decisões e o modelo de dados: [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
@@ -101,7 +101,7 @@ Arquivos que ficam só no repositório:
 
 ## Fluxo de uso
 
-1. O escritório entra no painel e envia os XMLs da carga (ou coloca a pasta `C123` dentro de `CargasEmRota` no Drive e clica em **Sincronizar**).
+1. O escritório entra no painel e envia os XMLs da carga (ou coloca a pasta `C123` dentro de `CargasCarregamento` no Drive e clica em **Sincronizar**).
 2. O sistema grava notas e itens no banco e geocodifica os endereços.
 3. O escritório envia o link da carga ao motorista pelo WhatsApp.
 4. O motorista confere a rota sugerida, ajusta se precisar e toca em **Salvar**.

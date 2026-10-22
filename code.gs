@@ -3,7 +3,7 @@
  * Versão: 4.0
  *
  * Arquitetura:
- * - Drive "CargasEmRota" = Arquivo dos XMLs (uma pasta por carga)
+ * - Drive "CargasCarregamento" = Arquivo dos XMLs (uma pasta por carga)
  * - Banco Turso = Dados (cargas, notas, itens, leituras do carregamento, geocache, uso de API)
  * - Planilha Google Sheets = Só o menu de configuração (não guarda dados)
  * - PainelControle.html = Interface admin (protegida por senha)
@@ -29,7 +29,7 @@
 
 const CONFIG = {
   VERSAO: '4.0',
-  PASTA_CARGAS: 'CargasEmRota',
+  PASTA_CARGAS: 'CargasCarregamento', // diferente da versão 3 (CargasEmRota): os dois sistemas rodam na mesma conta
   ENDERECO_PARTIDA_PADRAO: 'Stock Center, BR 471, km 121 - Santa Cruz do Sul - RS',
 
   // Número da carga: C + números + sufixo opcional (ex: C123, C123A)
