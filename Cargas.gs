@@ -120,11 +120,16 @@ function CARGA_importarNotas_(numeroCarga, notas) {
     });
   });
 
-  // Notas novas numa carga já carregada: o carregamento volta para "em andamento"
+  // Notas novas numa carga já carregada: o carregamento volta para "em andamento".
+  // A rota é destravada, porque a NF nova precisa entrar na ordem de entrega.
   if (novas.length > 0) {
     comandos.push({
       sql: 'UPDATE carga SET status_carregamento = \'EM_ANDAMENTO\', carregamento_fim = NULL ' +
            'WHERE numero = ? AND status_carregamento = \'FINALIZADO\'',
+      args: [carga]
+    });
+    comandos.push({
+      sql: 'UPDATE carga SET rota_travada_em = NULL WHERE numero = ?',
       args: [carga]
     });
   }

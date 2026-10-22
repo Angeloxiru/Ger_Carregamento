@@ -20,6 +20,14 @@ function REGRA_arred_(valor) {
 }
 
 /**
+ * Quantidade de uma leitura: unidades inteiras, no mínimo 1
+ */
+function REGRA_quantidade_(valor) {
+  var q = Math.floor(Number(valor));
+  return q >= 1 ? q : 1;
+}
+
+/**
  * Quanto ainda falta carregar de um item
  */
 function REGRA_pendente_(item) {
@@ -41,6 +49,7 @@ function REGRA_notaCompleta_(nota) {
  * Não altera a nota: devolve as quantidades a somar em cada item.
  *
  * - tipo CONFIRMACAO: toque num item sem código de barras (itemId)
+ * - a quantidade é sempre um número inteiro de unidades (vazio ou inválido = 1)
  * - outros tipos: procura o código entre os itens da nota. Se o mesmo código
  *   aparece em mais de um item, a quantidade é distribuída na ordem dos itens.
  *
@@ -50,8 +59,7 @@ function REGRA_notaCompleta_(nota) {
  *   resultado: ACEITA | NAO_PERTENCE | EXCEDENTE | NOTA_FINALIZADA
  */
 function REGRA_avaliarLeitura_(nota, leitura) {
-  var quantidade = REGRA_arred_(leitura.quantidade);
-  if (!(quantidade > 0)) quantidade = 1;
+  var quantidade = REGRA_quantidade_(leitura.quantidade);
 
   if (REGRA_notaCompleta_(nota)) {
     return { resultado: 'NOTA_FINALIZADA', alocacoes: [], pendente: 0 };
@@ -116,6 +124,7 @@ function REGRA_fonteCliente_() {
     'var REGRA_EPS = ' + REGRA_EPS + ';',
     normalizarCodigoBarras_.toString(),
     REGRA_arred_.toString(),
+    REGRA_quantidade_.toString(),
     REGRA_pendente_.toString(),
     REGRA_notaCompleta_.toString(),
     REGRA_avaliarLeitura_.toString(),

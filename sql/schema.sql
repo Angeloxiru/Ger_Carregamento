@@ -5,6 +5,8 @@
 -- com:  node tools/gerar-schema.js
 --
 -- Pode ser rodado várias vezes: tudo usa IF NOT EXISTS / INSERT OR IGNORE.
+-- Coluna nova em tabela que já existe: coloque no CREATE TABLE abaixo e
+-- também em DB_COLUNAS_NOVAS (Turso.gs), que faz o ALTER TABLE nos bancos antigos.
 -- Cada comando termina com ";" no fim da linha (o gerador separa por aí).
 --
 -- Convenções:
@@ -97,6 +99,7 @@ CREATE TABLE IF NOT EXISTS carga (
   status_carregamento   TEXT NOT NULL DEFAULT 'NAO_INICIADO'
                         REFERENCES lkp_status_carregamento(codigo),
   ordem_salva_em        TEXT,
+  rota_travada_em       TEXT,                    -- motorista tocou em Carregar: rota não muda mais
   carregamento_inicio   TEXT,
   carregamento_fim      TEXT,
   criado_em             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -277,6 +280,7 @@ SELECT
   c.status_carregamento,
   sc.descricao             AS status_carregamento_desc,
   c.ordem_salva_em,
+  c.rota_travada_em,
   c.carregamento_inicio,
   c.carregamento_fim,
   c.criado_em,
@@ -307,4 +311,5 @@ JOIN lkp_resultado_leitura r ON r.codigo = l.resultado
 WHERE r.aceita = 0;
 
 INSERT OR IGNORE INTO schema_versao (versao, descricao) VALUES
-  (1, 'Schema inicial: cargas, notas, itens, carregamento, geocache, uso de API');
+  (1, 'Schema inicial: cargas, notas, itens, carregamento, geocache, uso de API'),
+  (2, 'Trava da rota ao gerar o carregamento (carga.rota_travada_em)');

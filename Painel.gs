@@ -172,6 +172,7 @@ function PAINEL_listarCargasComLinks(senha) {
         pesoTotal: c.peso_kg,
         status: status,
         rotaSalva: c.total_notas > 0 && c.notas_com_ordem === c.total_notas,
+        rotaTravada: !!c.rota_travada_em,
         carregamento: {
           status: c.status_carregamento,
           descricao: c.status_carregamento_desc,
@@ -240,6 +241,7 @@ function PAINEL_detalheCarga(senha, numeroCarga) {
       numero: carga.numero,
       transportadora: carga.transportadora,
       statusCarregamento: carga.status_carregamento,
+      rotaTravada: !!carga.rota_travada_em,
       notas: r[0].map(function(n) {
         n.itens = itensPorNota[n.id] || [];
         return n;
@@ -252,8 +254,24 @@ function PAINEL_detalheCarga(senha, numeroCarga) {
 }
 
 /**
- * PAINEL_reiniciarCarregamento - Apaga as leituras e volta o carregamento ao início
- * (para quando o caminhão precisa ser descarregado e conferido de novo)
+ * PAINEL_destravarRota - Libera o motorista para mudar a ordem das entregas
+ * As leituras do carregamento continuam valendo.
+ */
+function PAINEL_destravarRota(senha, numeroCarga) {
+  exigirAdmin_(senha);
+
+  try {
+    const carga = CARGA_buscarOuErro_(numeroCarga);
+    DB_executar_('UPDATE carga SET rota_travada_em = NULL, atualizado_em = ? WHERE id = ?', [dataIso_(), carga.id]);
+    return { sucesso: true, mensagem: 'Rota da carga ' + carga.numero + ' destravada. O motorista já pode mudar a ordem.' };
+  } catch (erro) {
+    return { sucesso: false, erro: erro.message || String(erro) };
+  }
+}
+
+/**
+ * PAINEL_reiniciarCarregamento - Apaga as leituras, volta o carregamento ao
+ * início e destrava a rota (para quando o caminhão precisa ser descarregado)
  */
 function PAINEL_reiniciarCarregamento(senha, numeroCarga) {
   exigirAdmin_(senha);
@@ -265,11 +283,12 @@ function PAINEL_reiniciarCarregamento(senha, numeroCarga) {
     DB_transacao_([
       { sql: 'DELETE FROM carregamento_leitura WHERE carga_id = ?', args: [carga.id] },
       {
-        sql: 'UPDATE carga SET status_carregamento = \'NAO_INICIADO\', carregamento_inicio = NULL, carregamento_fim = NULL, atualizado_em = ? WHERE id = ?',
+        sql: 'UPDATE carga SET status_carregamento = \'NAO_INICIADO\', carregamento_inicio = NULL, carregamento_fim = NULL, ' +
+             'rota_travada_em = NULL, atualizado_em = ? WHERE id = ?',
         args: [dataIso_(), carga.id]
       }
     ]);
-    return { sucesso: true, mensagem: 'Carregamento da carga ' + carga.numero + ' reiniciado. As leituras foram apagadas.' };
+    return { sucesso: true, mensagem: 'Carregamento da carga ' + carga.numero + ' reiniciado. As leituras foram apagadas e a rota foi destravada.' };
   } catch (erro) {
     return { sucesso: false, erro: erro.message || String(erro) };
   } finally {

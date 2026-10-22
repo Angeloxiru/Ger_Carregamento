@@ -115,8 +115,11 @@ async function principal() {
   await mot.waitForSelector('.parada');
   assert.strictEqual(await mot.locator('.parada').count(), 3);
   await mot.screenshot({ path: path.join(CAPTURAS, '1-motorista-rota.png') });
-  await mot.click('#btnCarregar'); // confirma "salvar ordem" (dialog aceito)
+  await mot.click('#btnCarregar'); // confirma "gerar carregamento e travar a rota" (dialog aceito)
   await mot.waitForSelector('.qr-imagem');
+  assert.strictEqual(await mot.locator('.ordem-btns').count(), 0, 'sem ▲▼ com a rota travada');
+  assert.ok(await mot.isDisabled('#btnSalvar'));
+  assert.ok(await mot.isDisabled('#btnRecalcular'));
   await mot.waitForTimeout(400); // fim da animação do modal
 
   // O QR code precisa decodificar exatamente para o link do coletor
@@ -136,7 +139,9 @@ async function principal() {
   const ordemSalva = amb.db.prepare('SELECT COUNT(*) n FROM nota_fiscal WHERE ordem_entrega IS NOT NULL').get().n;
   assert.strictEqual(ordemSalva, 3, 'Carregar salvou a ordem antes de gerar o QR');
   await mot.screenshot({ path: path.join(CAPTURAS, '2-motorista-qrcode.png') });
-  console.log('  ✓ motorista: rota, salvar ordem e QR code (decodificado: ' + lido + ')');
+  await mot.click('#modalCarregamento .btn-icone');
+  await mot.screenshot({ path: path.join(CAPTURAS, '2b-motorista-rota-travada.png') });
+  console.log('  ✓ motorista: rota, QR code (decodificado: ' + lido + ') e rota travada');
 
   // A ordem de carregamento é a inversa da que o motorista salvou
   const ordemRota = amb.db.prepare('SELECT numero FROM nota_fiscal ORDER BY ordem_entrega').all().map(function(l) { return l.numero; });
@@ -170,7 +175,7 @@ async function principal() {
       assert.ok(/NF 1003/.test(await texto(col, '#retorno')), 'avisa de qual nota é o produto');
       await ler(col, '7891000200206', 4);
       await ler(col, '7891000200206');
-      await ler(col, '7891000300305', '2,5');
+      await ler(col, '7891000300305', 2);
     },
     '1003': async function() {
       // Lê, desfaz e lê de novo
@@ -233,13 +238,18 @@ async function principal() {
   await painel.waitForSelector('.det-nota');
   await painel.click('.det-nota summary');
   await painel.screenshot({ path: path.join(CAPTURAS, '9-painel-itens.png') });
-  await painel.click('#detCorpo .btn-secundario');
+  await painel.click('#detCorpo >> text=Destravar rota'); // dialog aceito
+  await painel.waitForFunction(function() {
+    return !/Destravar/.test(document.getElementById('detCorpo').textContent) && document.querySelector('.det-nota');
+  });
+  assert.strictEqual(amb.db.prepare("SELECT rota_travada_em r FROM carga WHERE numero = 'C100'").get().r, null);
+  await painel.click('#detCorpo >> text=Fechar');
   await painel.click('.carga:has-text("C100") .btn-perigo.btn-icone'); // excluir (dialog aceito)
   await painel.waitForFunction(function() { return document.querySelectorAll('.carga').length === 1; });
   assert.strictEqual(amb.db.prepare("SELECT COUNT(*) n FROM nota_fiscal n JOIN carga c ON c.id = n.carga_id WHERE c.numero = 'C100'").get().n, 0);
   assert.strictEqual(amb.db.prepare('SELECT COUNT(*) n FROM nota_item').get().n, 3, 'só os itens da C300');
   assert.deepStrictEqual(painel.erros.concat(mot.erros, off.erros), [], 'erros de JavaScript no painel/motorista');
-  console.log('  ✓ painel: situação do carregamento, itens e exclusão');
+  console.log('  ✓ painel: situação do carregamento, itens, destravar rota e exclusão');
 
   await browser.close();
   console.log('\nCapturas em testes/capturas/');

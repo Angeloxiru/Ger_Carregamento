@@ -35,7 +35,7 @@ function montarXml(nf) {
 /**
  * Carga de exemplo com casos especiais:
  * - NF 1001: item com GTIN-14 com zero à esquerda e item "SEM GTIN"
- * - NF 1002: mesmo código de barras em dois itens (3 + 2) e quantidade fracionada
+ * - NF 1002: mesmo código de barras em dois itens (3 + 2)
  * - NF 1003: item simples, pagamento à vista
  */
 const NOTAS = [
@@ -51,7 +51,7 @@ const NOTAS = [
     itens: [
       { cProd: 'B10', xProd: 'Charque 5kg', cEANTrib: '7891000200206', qTrib: '3' },
       { cProd: 'B10', xProd: 'Charque 5kg (bonificação)', cEANTrib: '7891000200206', qTrib: '2' },
-      { cProd: 'B30', xProd: 'Queijo colonial', cEANTrib: '7891000300305', uTrib: 'KG', qTrib: '2.5000' }
+      { cProd: 'B30', xProd: 'Queijo colonial', cEANTrib: '7891000300305', uTrib: 'UN', qTrib: '2.0000' }
     ]
   },
   {

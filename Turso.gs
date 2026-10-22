@@ -224,11 +224,46 @@ function DB_marcadores_(quantidade) {
 // ============= ESTRUTURA DO BANCO =============
 
 /**
+ * Colunas criadas depois da primeira versão do schema.
+ * O CREATE TABLE IF NOT EXISTS não altera tabela que já existe, então
+ * DB_migrar_ acrescenta estas colunas nos bancos criados antes delas.
+ */
+const DB_COLUNAS_NOVAS = [
+  { tabela: 'carga', coluna: 'rota_travada_em', tipo: 'TEXT' }
+];
+
+/**
+ * DB_alterTablesPendentes_ - ALTER TABLE das colunas que faltam em tabelas existentes
+ */
+function DB_alterTablesPendentes_() {
+  const tabelas = {};
+  DB_COLUNAS_NOVAS.forEach(function(c) { tabelas[c.tabela] = true; });
+  const nomes = Object.keys(tabelas);
+  const colunas = DB_consultas_(nomes.map(function(t) {
+    return { sql: 'SELECT name FROM pragma_table_info(?)', args: [t] };
+  }));
+
+  const existentes = {};
+  nomes.forEach(function(t, i) {
+    existentes[t] = {};
+    colunas[i].forEach(function(l) { existentes[t][l.name] = true; });
+  });
+
+  return DB_COLUNAS_NOVAS.filter(function(c) {
+    const tabelaExiste = Object.keys(existentes[c.tabela]).length > 0;
+    return tabelaExiste && !existentes[c.tabela][c.coluna];
+  }).map(function(c) {
+    return { sql: 'ALTER TABLE ' + c.tabela + ' ADD COLUMN ' + c.coluna + ' ' + c.tipo };
+  });
+}
+
+/**
  * DB_migrar_ - Cria ou atualiza tabelas, views e lookups (pode rodar sempre)
  * @returns {Object} { versao, comandos }
  */
 function DB_migrar_() {
-  DB_transacao_(SCHEMA_SQL.map(function(sql) { return { sql: sql }; }));
+  const alteracoes = DB_alterTablesPendentes_();
+  DB_transacao_(alteracoes.concat(SCHEMA_SQL.map(function(sql) { return { sql: sql }; })));
   const v = DB_primeiro_('SELECT MAX(versao) AS versao FROM schema_versao');
   return { versao: v ? v.versao : 0, comandos: SCHEMA_SQL.length };
 }

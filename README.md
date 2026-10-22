@@ -9,7 +9,8 @@ Evolução do [Ger_roteirizacao](https://github.com/Angeloxiru/Ger_roteirizacao)
 - **Conferência de carregamento com coletor.** O motorista toca em **Carregar** e aparece um QR code. O conferente lê o QR com o coletor e confere cada nota: número da NF, cliente e a lista de itens. Cada leitura de código de barras soma no item, que fica verde quando completo.
 - **Itens da nota salvos no banco**: código do item, descrição, código de barras (`cEANTrib`) e quantidade (`qTrib`).
 - **Ordem inversa da rota**: a última entrega entra primeiro no caminhão.
-- **Campo de quantidade** antes da leitura: vazio, cada leitura vale 1; com um número, a leitura vale aquele número.
+- **Rota travada ao gerar o carregamento**: depois de tocar em **Carregar**, o motorista não consegue mais reordenar, recalcular nem salvar outra ordem. Só o escritório destrava, pelo painel.
+- **Campo de quantidade** antes da leitura: vazio, cada leitura vale 1 unidade; com um número, a leitura vale aquele número. Só unidades inteiras.
 - **Bloqueio por nota**: só passa para a próxima nota quando a atual estiver completa. Item sem código de barras é confirmado com um toque.
 - **Avisos na hora**: código de outra nota (diz qual NF e cliente), quantidade acima do que falta, nota já completa. Som e vibração diferentes para acerto e erro.
 - **Funciona com internet instável**: as leituras ficam guardadas no coletor e são enviadas quando a conexão volta.
@@ -18,13 +19,13 @@ Evolução do [Ger_roteirizacao](https://github.com/Angeloxiru/Ger_roteirizacao)
 
 ## Telas
 
-| Motorista | QR code | Coletor | Código errado |
+| Motorista | QR code | Rota travada | Coletor |
 |:-:|:-:|:-:|:-:|
-| ![Rota](docs/telas/1-motorista-rota.png) | ![QR](docs/telas/2-motorista-qrcode.png) | ![Leitura](docs/telas/4-coletor-leitura.png) | ![Excedente](docs/telas/5-coletor-excedente.png) |
+| ![Rota](docs/telas/1-motorista-rota.png) | ![QR](docs/telas/2-motorista-qrcode.png) | ![Travada](docs/telas/2b-motorista-rota-travada.png) | ![Leitura](docs/telas/4-coletor-leitura.png) |
 
-| Nota completa | Finalizado | Sem internet |
-|:-:|:-:|:-:|
-| ![Nota completa](docs/telas/6-coletor-nota-completa.png) | ![Fim](docs/telas/7-coletor-finalizado.png) | ![Offline](docs/telas/10-coletor-sem-internet.png) |
+| Código errado | Nota completa | Finalizado | Sem internet |
+|:-:|:-:|:-:|:-:|
+| ![Excedente](docs/telas/5-coletor-excedente.png) | ![Nota completa](docs/telas/6-coletor-nota-completa.png) | ![Fim](docs/telas/7-coletor-finalizado.png) | ![Offline](docs/telas/10-coletor-sem-internet.png) |
 
 ![Painel](docs/telas/9-painel-itens.png)
 
@@ -32,9 +33,9 @@ Evolução do [Ger_roteirizacao](https://github.com/Angeloxiru/Ger_roteirizacao)
 
 - **Importação de XML NF-e**: upload pelo painel (UTF-8 e ISO-8859-1) ou pasta `CargasEmRota` no Drive. Se a carga já existir, as NFs novas são acrescentadas sem perder o status das antigas.
 - **Roteirização sem custo**: ordem das cidades e, dentro de cada cidade, ordem por proximidade (vizinho mais próximo + 2-opt + or-opt). Entregas no mesmo endereço viram uma parada só.
-- **Tela do motorista**: próxima parada em destaque, **Entregue** com desfazer, reordenação com ▲▼, **Recalcular**, **Maps** com as próximas 4 paradas, aviso de "Cobrar à vista" e de "Local aproximado", e o botão **Carregar** com o QR code e o andamento da conferência.
+- **Tela do motorista**: próxima parada em destaque, **Entregue** com desfazer, reordenação com ▲▼, **Recalcular**, **Maps** com as próximas 4 paradas, aviso de "Cobrar à vista" e de "Local aproximado", e o botão **Carregar** com o QR code e o andamento da conferência (a partir daí a rota fica travada).
 - **Tela do coletor**: notas na ordem inversa da rota, leitura por leitor de código de barras (o leitor "digita" o código e aperta Enter), teclado opcional para digitar, desfazer a última leitura, lista de notas, tela mantida acesa.
-- **Painel administrativo**: cargas com progresso de entrega e de carregamento, rota salva ou não, itens de cada nota, leituras recusadas, reiniciar carregamento, link do motorista (copiar, WhatsApp, abrir), envio de XMLs, sincronização com o Drive e exclusão.
+- **Painel administrativo**: cargas com progresso de entrega e de carregamento, rota salva ou travada, itens de cada nota, leituras recusadas, destravar rota, reiniciar carregamento, link do motorista (copiar, WhatsApp, abrir), envio de XMLs, sincronização com o Drive e exclusão.
 - **Uso de API por transportadora**: carregamentos de mapa e geocodificações por CNPJ, com custo em reais (PTAX do Banco Central).
 - **Auditoria**: acessos aos links (`log_acesso`), hora de cada entrega e cada leitura do carregamento, aceita ou recusada.
 
@@ -104,7 +105,7 @@ Arquivos que ficam só no repositório:
 2. O sistema grava notas e itens no banco e geocodifica os endereços.
 3. O escritório envia o link da carga ao motorista pelo WhatsApp.
 4. O motorista confere a rota sugerida, ajusta se precisar e toca em **Salvar**.
-5. O motorista toca em **Carregar** e mostra o QR code ao conferente.
+5. O motorista toca em **Carregar**, confirma, e mostra o QR code ao conferente. A rota fica travada.
 6. O conferente lê o QR com o coletor e confere nota por nota até aparecer **Carregamento finalizado**.
 7. Na rua, o motorista toca em **Entregue** a cada parada.
 
@@ -139,7 +140,7 @@ Pela linha de comando do Turso, o mesmo é: `turso db create rota-gaucha`, `turs
 
 ## Atualizar a estrutura do banco
 
-1. Altere `sql/schema.sql` (sempre com `IF NOT EXISTS`, e uma linha nova em `schema_versao`).
+1. Altere `sql/schema.sql` (sempre com `IF NOT EXISTS`, e uma linha nova em `schema_versao`). Coluna nova em tabela que já existe vai no `CREATE TABLE` e também em `DB_COLUNAS_NOVAS`, no `Turso.gs`, que faz o `ALTER TABLE` nos bancos antigos.
 2. Rode `npm run schema` para gerar o `Schema.gs`.
 3. Cole o `Schema.gs` novo no Apps Script e rode **🚚 Rota Gaúcha › Testar e atualizar o banco**.
 
@@ -149,7 +150,7 @@ Precisa de Node.js 22 ou mais novo (só para quem desenvolve; o sistema em si n�
 
 ```
 npm install
-npm test             # backend: 22 testes com um Turso simulado em SQLite
+npm test             # backend: 26 testes com um Turso simulado em SQLite
 npm run test:telas   # telas no Chromium, com capturas em testes/capturas/
 ```
 

@@ -162,7 +162,7 @@ function CARREG_registrar(numeroCarga, token, leituras) {
         itemId: l.itemId
       };
       const av = REGRA_avaliarLeitura_(nota, leitura);
-      const quantidade = REGRA_arred_(l.quantidade) > 0 ? REGRA_arred_(l.quantidade) : 1;
+      const quantidade = REGRA_quantidade_(l.quantidade);
       const comum = [dados.id, nota.id];
       const fim = [tipo, av.resultado, String(l.dispositivo || '').substring(0, 60), String(l.lidoEm || agora).substring(0, 30)];
 

@@ -19,9 +19,12 @@ O repositório `Ger_roteirizacao` (versão 3.0) continua em produção e serviu 
 | Banco | Turso (libSQL) pela API HTTP | O carregamento grava muito mais que a roteirização (um registro por bipe). No Sheets cada gravação leva de 1 a 3 s e entra em fila; o Turso tem tabelas, views e transações |
 | Planilha | Fica só com o menu de configuração | Nenhum dado de carga mora mais nela |
 | Código lido | `cEANTrib` do item | Definido pelo usuário |
-| Quantidade | `qTrib` (quantidade tributável) | Definido pelo usuário |
+| Quantidade | `qTrib` (quantidade tributável), sempre em unidades inteiras | Definido pelo usuário: a operação não trabalha com itens vendidos por peso |
+| Rota depois do carregamento | Travada ao tocar em **Carregar**; só o painel destrava | Definido pelo usuário: a ordem do caminhão não pode mudar depois de carregado |
 | Ordem do carregamento | Inversa da rota | A última entrega entra primeiro e fica no fundo do caminhão |
 | Nota incompleta | Bloqueia: só passa para a próxima nota quando a atual estiver completa | Definido pelo usuário. Item sem código de barras é confirmado com um toque |
+| Histórico de uso de API | Fica no banco quando a carga é excluída | Definido pelo usuário: é a base da cobrança das transportadoras |
+| Pasta removida do Drive | A sincronização exclui a carga do banco | Definido pelo usuário: mesmo comportamento da 3.0 |
 
 ## 3. Visão geral
 
@@ -45,11 +48,19 @@ O repositório `Ger_roteirizacao` (versão 3.0) continua em produção e serviu 
 1. **Escritório** envia os XMLs da carga (`C123`). O sistema guarda os arquivos no Drive, lê destinatário, endereço, peso, transportadora **e os itens** (`cProd`, `xProd`, `cEAN`, `cEANTrib`, `qCom`, `qTrib`, unidades) e grava tudo no banco numa transação.
 2. Os endereços são geocodificados na hora e ficam em `geo_cache` para sempre.
 3. **Motorista** abre o link, revisa a rota sugerida (cidade, depois proximidade), ajusta se quiser e toca em **Salvar**.
-4. Motorista toca em **Carregar**. Se a ordem não estiver salva, o sistema pede para salvar antes. Aparece um **QR code** com o link do carregamento (token próprio, diferente do link do motorista).
+4. Motorista toca em **Carregar** e confirma. A ordem atual é salva e a **rota fica travada**: ▲▼, Recalcular e Salvar deixam de funcionar (o servidor também recusa). Aparece um **QR code** com o link do carregamento (token próprio, diferente do link do motorista).
 5. **Conferente** lê o QR com o coletor. A tela mostra a primeira nota a carregar (última entrega da rota): número da NF, cliente, cidade e a lista de itens.
-6. Cada bipe soma 1 no item. Se o campo **Qtd** tiver um número, aquele bipe vale essa quantidade e o campo se limpa. Itens sem código de barras têm o botão **Confirmar**.
+6. Cada bipe soma 1 unidade no item. Se o campo **Qtd** tiver um número inteiro, aquele bipe vale essa quantidade e o campo se limpa. Itens sem código de barras têm o botão **Confirmar**.
 7. Item completo fica verde. Nota completa mostra **Próxima nota** (ou basta ler o primeiro item da próxima). Ao terminar todas, aparece **Carregamento finalizado**.
 8. O motorista acompanha o progresso no próprio QR (atualiza a cada 10 s) e o escritório vê tudo no painel, inclusive leituras recusadas.
+
+### Quando a rota destrava
+
+| Situação | O que acontece |
+|----------|----------------|
+| Escritório toca em **Destravar rota** (detalhes da carga no painel) | Motorista pode mudar a ordem. As leituras feitas continuam valendo; as notas que faltam passam a seguir a rota nova, invertida |
+| Escritório toca em **Reiniciar carregamento** | Leituras apagadas, conferência do zero e rota destravada |
+| Chega NF nova para a carga | Rota destravada, porque a NF nova precisa entrar na ordem. O motorista salva e toca em **Carregar** de novo |
 
 ## 5. Conferência de cada leitura
 
@@ -64,6 +75,7 @@ A regra fica em `RegraCarregamento.gs` e roda **nos dois lados**: o servidor env
 
 Detalhes:
 
+- **Só unidades inteiras**: quantidade fracionada vira inteiro (2,7 vira 2) e zero ou vazio vira 1, no coletor e no servidor.
 - **Zeros à esquerda**: `07891000100103` (GTIN-14) e `7891000100103` (EAN-13) são o mesmo código.
 - **Mesmo código em dois itens** (ex.: venda e bonificação do mesmo produto): a quantidade é distribuída na ordem dos itens.
 - **`SEM GTIN`** vira item sem código, confirmado com toque.
@@ -77,14 +89,14 @@ Mais de um coletor na mesma carga funciona: o servidor confere cada lote com tra
 
 ## 7. Banco de dados
 
-O schema está em [`sql/schema.sql`](../sql/schema.sql). O `Schema.gs` é gerado dele (`npm run schema`) e aplicado pelo menu da planilha. Pode rodar quantas vezes quiser.
+O schema está em [`sql/schema.sql`](../sql/schema.sql). O `Schema.gs` é gerado dele (`npm run schema`) e aplicado pelo menu da planilha. Pode rodar quantas vezes quiser. Versão atual: **2**. Colunas criadas depois da versão 1 ficam listadas em `DB_COLUNAS_NOVAS` (`Turso.gs`), que faz o `ALTER TABLE` em bancos criados antes delas.
 
 ### Tabelas
 
 | Tabela | Conteúdo |
 |--------|----------|
 | `transportadora` | CNPJ/CPF e nome |
-| `carga` | Número (C123), transportadora, status do carregamento, datas |
+| `carga` | Número (C123), transportadora, status do carregamento, `rota_travada_em`, datas |
 | `nota_fiscal` | Uma linha por NF: destinatário, endereço, peso, valor, condição de pagamento, ordem de entrega, status da entrega |
 | `nota_item` | Itens da NF (`det/prod`), com `codigo_barras` normalizado e `qtd_esperada` |
 | `carregamento_leitura` | Cada bipe ou confirmação: código, quantidade, resultado, aparelho, hora, estorno |
@@ -136,8 +148,8 @@ As chaves estrangeiras também têm `ON DELETE CASCADE`, mas a exclusão não de
 
 | Comando | O que testa |
 |---------|-------------|
-| `npm test` | 22 testes do backend. Os arquivos `.gs` reais rodam no Node com os serviços do Google simulados e um Turso falso (SQLite em memória falando o mesmo protocolo HTTP) |
-| `npm run test:telas` | As telas no Chromium: motorista gera o QR (o teste decodifica o QR e confere o link), coletor confere a carga inteira com leitor simulado, queda de internet, painel e exclusão. Salva capturas em `testes/capturas/` |
+| `npm test` | 26 testes do backend. Os arquivos `.gs` reais rodam no Node com os serviços do Google simulados e um Turso falso (SQLite em memória falando o mesmo protocolo HTTP) |
+| `npm run test:telas` | As telas no Chromium: motorista gera o QR (o teste decodifica o QR e confere o link), rota travada, coletor confere a carga inteira com leitor simulado, queda de internet, painel (destravar rota) e exclusão. Salva capturas em `testes/capturas/` |
 
 ## 11. Próximas fases (sugestões)
 

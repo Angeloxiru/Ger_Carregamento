@@ -56,7 +56,7 @@
     <form id="formLeitura" class="leitura" autocomplete="off" onsubmit="return false">
       <label class="leitura-qtd">
         <span>Qtd</span>
-        <input id="qtd" type="text" inputmode="decimal" placeholder="1" maxlength="8" aria-label="Quantidade para a próxima leitura (vazio = 1)">
+        <input id="qtd" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="1" maxlength="4" aria-label="Quantidade de unidades para a próxima leitura (vazio = 1)">
       </label>
       <input id="codigo" class="leitura-codigo" type="text" inputmode="none" placeholder="Leia o código de barras" maxlength="64" aria-label="Código de barras" autofocus>
       <button type="button" id="btnTeclado" class="btn btn-secundario btn-icone" title="Mostrar teclado para digitar o código" aria-label="Mostrar teclado" aria-pressed="false">⌨</button>

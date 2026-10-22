@@ -26,8 +26,12 @@ function lerComandos(sql) {
 function gerar() {
   const sql = fs.readFileSync(path.join(raiz, 'sql', 'schema.sql'), 'utf8');
   const comandos = lerComandos(sql);
-  const versao = (sql.match(/INSERT OR IGNORE INTO schema_versao[\s\S]*?\((\d+),/g) || [])
-    .map(function(m) { return parseInt(m.match(/\((\d+),/)[1], 10); })
+  // Maior número entre as linhas "(N, '...')" dos INSERT em schema_versao
+  const versao = comandos
+    .filter(function(c) { return /^INSERT OR IGNORE INTO schema_versao/.test(c); })
+    .map(function(c) { return c.match(/\(\s*(\d+)\s*,/g) || []; })
+    .reduce(function(a, b) { return a.concat(b); }, [])
+    .map(function(m) { return parseInt(m.replace(/\D/g, ''), 10); })
     .reduce(function(a, b) { return Math.max(a, b); }, 0);
 
   const conteudo =

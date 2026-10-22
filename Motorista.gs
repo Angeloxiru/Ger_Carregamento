@@ -68,6 +68,7 @@ function MOTORISTA_buscarCarga(numeroCarga, token) {
         lng: coordPartida ? coordPartida.lng : null
       },
       entregas: entregas,
+      rotaTravada: !!dadosCarga.rota_travada_em,
       carregamento: { status: dadosCarga.status_carregamento }
     };
   } catch (erro) {
@@ -77,6 +78,7 @@ function MOTORISTA_buscarCarga(numeroCarga, token) {
 
 /**
  * MOTORISTA_salvarOrdemRota - Grava a ordem das entregas (nota_fiscal.ordem_entrega)
+ * Recusa quando a rota já foi travada pelo botão Carregar.
  * @param {String} numeroCarga
  * @param {String} token
  * @param {Object} ordemPorNF - { numeroNF: ordem }
@@ -88,6 +90,9 @@ function MOTORISTA_salvarOrdemRota(numeroCarga, token, ordemPorNF) {
     lock.waitLock(20000);
 
     const dadosCarga = CARGA_buscarOuErro_(carga);
+    if (dadosCarga.rota_travada_em) {
+      return { sucesso: false, rotaTravada: true, erro: '🔒 A rota foi travada quando o carregamento foi gerado. Peça ao escritório para destravar se precisar mudar a ordem.' };
+    }
     const nfs = Object.keys(ordemPorNF || {});
     if (nfs.length === 0) return { sucesso: false, erro: 'Nenhuma entrega informada.' };
 
@@ -156,6 +161,7 @@ function alterarStatusEntregas_(numeroCarga, token, nfs, concluir) {
 /**
  * MOTORISTA_carregamento - Link do coletor (para o QR code) e progresso
  * Exige a rota salva: a ordem de carregamento é a inversa da rota.
+ * Na primeira chamada trava a rota (carga.rota_travada_em).
  * @param {String} numeroCarga
  * @param {String} token - Token do link do motorista
  * @returns {Object} { sucesso, link, status, statusDescricao, notas, notasCarregadas, qtdEsperada, qtdLida, erro }
@@ -174,8 +180,16 @@ function MOTORISTA_carregamento(numeroCarga, token) {
       };
     }
 
+    if (!resumo.rota_travada_em) {
+      DB_executar_(
+        'UPDATE carga SET rota_travada_em = ?, atualizado_em = ? WHERE id = ? AND rota_travada_em IS NULL',
+        [dataIso_(), dataIso_(), resumo.carga_id]
+      );
+    }
+
     return {
       sucesso: true,
+      rotaTravada: true,
       link: gerarLinkCarregamento_(carga),
       status: resumo.status_carregamento,
       statusDescricao: resumo.status_carregamento_desc,

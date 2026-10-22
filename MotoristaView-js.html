@@ -19,8 +19,16 @@ var Estado = {
   paradas: [],        // na ordem de visita: {id, endereco, bairro, cidade, uf, lat, lng, aproximado, entregas[]}
   cidades: [],        // ordem das cidades da última otimização
   alterado: false,    // ordem mudou e ainda não foi salva
-  ordemSalva: false   // a ordem veio do banco
+  ordemSalva: false,  // a ordem veio do banco
+  rotaTravada: false  // travada ao gerar o carregamento: a ordem não muda mais
 };
+
+/** Avisa e devolve true quando a rota está travada */
+function rotaTravadaAviso() {
+  if (!Estado.rotaTravada) return false;
+  Util.toast('🔒 A rota foi travada quando o carregamento foi gerado.', { erro: true });
+  return true;
+}
 
 function paradaConcluida(p) {
   return p.entregas.every(function(e) { return e.concluida; });
@@ -147,7 +155,8 @@ function iniciar(dados) {
   }
 
   var entregas = dados.entregas;
-  Estado.ordemSalva = temOrdemSalva(entregas);
+  Estado.rotaTravada = !!dados.rotaTravada;
+  Estado.ordemSalva = Estado.rotaTravada || temOrdemSalva(entregas);
 
   if (Estado.ordemSalva) {
     entregas = entregas.slice().sort(function(a, b) {
@@ -181,7 +190,9 @@ var Tela = {
     this.lista();
     this.legenda();
     var btn = document.getElementById('btnSalvar');
-    btn.classList.toggle('pendente', Estado.alterado);
+    btn.classList.toggle('pendente', Estado.alterado && !Estado.rotaTravada);
+    btn.disabled = Estado.rotaTravada;
+    document.getElementById('btnRecalcular').disabled = Estado.rotaTravada;
   },
 
   resumo: function() {
@@ -231,6 +242,9 @@ var Tela = {
     if (Estado.paradas.length > 0 && pendentes.length === 0) {
       textoAviso = '🎉 <div><strong>Todas as entregas foram concluídas!</strong> Bom retorno.</div>';
       classeAviso = 'aviso aviso-info';
+    } else if (Estado.rotaTravada) {
+      textoAviso = '🔒 <div><strong>Rota travada para o carregamento.</strong> A ordem das entregas não pode mais ser alterada.</div>';
+      classeAviso = 'aviso aviso-info';
     } else if (Estado.alterado && !Estado.ordemSalva) {
       textoAviso = '💡 <div>Rota calculada automaticamente. Ajuste com ▲▼ se precisar e toque em <strong>Salvar</strong>. Depois use <strong>Carregar</strong> para gerar o QR code do carregamento.</div>';
     } else if (Estado.alterado) {
@@ -277,7 +291,7 @@ var Tela = {
         : '<button class="btn btn-azul principal" onclick="Tela.navegar(\'' + p.id + '\')">🧭 Navegar</button>' +
           '<button class="btn btn-primario principal" onclick="Tela.concluir(\'' + p.id + '\', this)">✓ Entregue</button>';
 
-      var ordem = concluida ? '' :
+      var ordem = concluida || Estado.rotaTravada ? '' :
         '<div class="ordem-btns">' +
           '<button class="btn btn-secundario" ' + (podeSubir ? '' : 'disabled') + ' onclick="Tela.mover(\'' + p.id + '\', -1)" aria-label="Subir parada">▲</button>' +
           '<button class="btn btn-secundario" ' + (podeDescer ? '' : 'disabled') + ' onclick="Tela.mover(\'' + p.id + '\', 1)" aria-label="Descer parada">▼</button>' +
@@ -313,6 +327,7 @@ var Tela = {
   // ---------- Ações ----------
 
   mover: function(id, direcao) {
+    if (rotaTravadaAviso()) return;
     var i = Estado.paradas.indexOf(buscarParada(id));
     var j = i + direcao;
     if (i < 0 || j < 0 || j >= Estado.paradas.length) return;
@@ -401,6 +416,7 @@ var Tela = {
   },
 
   recalcular: function() {
+    if (rotaTravadaAviso()) return;
     if (paradasPendentes().length < 2) { Util.toast('Poucas paradas para recalcular'); return; }
     if (!confirm('Recalcular a ordem das paradas que faltam?\n\nA rota parte da sua posição atual (se o celular permitir) ou da última entrega feita.')) return;
 
@@ -416,6 +432,7 @@ var Tela = {
   },
 
   salvar: function() {
+    if (rotaTravadaAviso()) return Promise.resolve(false);
     var btn = document.getElementById('btnSalvar');
     var ordemPorNF = {};
     var n = 1;
@@ -657,10 +674,14 @@ var Carregamento = {
     var self = this;
     var antes = Promise.resolve(true);
 
-    // O carregamento segue a ordem inversa da rota: a ordem precisa estar salva
-    if (Estado.alterado) {
-      if (!confirm('A ordem das paradas ainda não foi salva.\n\nO caminhão é carregado na ordem inversa da rota (a última entrega entra primeiro). Salvar a ordem agora?')) return;
-      antes = Tela.salvar();
+    // O carregamento segue a ordem inversa da rota e, ao gerar o QR code,
+    // a rota fica travada: confirma antes da primeira vez
+    if (!Estado.rotaTravada) {
+      var texto = 'Gerar o carregamento?\n\n🔒 A rota fica TRAVADA: depois disso a ordem das entregas não pode mais ser alterada.\n\n' +
+                  'O caminhão é carregado na ordem inversa da rota (a última entrega entra primeiro).';
+      if (Estado.alterado) texto += '\n\nA ordem atual será salva agora.';
+      if (!confirm(texto)) return;
+      if (Estado.alterado) antes = Tela.salvar();
     }
 
     antes.then(function(ok) {
@@ -691,6 +712,11 @@ var Carregamento = {
           return;
         }
         if (!r.sucesso) throw new Error(r.erro);
+        if (r.rotaTravada && !Estado.rotaTravada) {
+          Estado.rotaTravada = true;
+          Estado.alterado = false;
+          Tela.renderizar();
+        }
         self.link = r.link;
         self.desenhar(r, primeiraVez);
       })

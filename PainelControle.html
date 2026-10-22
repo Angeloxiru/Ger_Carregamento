@@ -286,8 +286,9 @@
             '<span class="selo ' + classeStatus(c.status) + '">' + Util.esc(c.status) + '</span>' +
             (c.erro ? '' : '<span class="selo">' + c.cidades + (c.cidades === 1 ? ' cidade' : ' cidades') + '</span>') +
             (c.erro ? '' : '<span class="selo">' + Util.peso(c.pesoTotal) + '</span>') +
-            (c.rotaSalva ? '<span class="selo selo-verde" title="O motorista salvou a ordem das entregas">Rota salva</span>'
-                         : '<span class="selo" title="O motorista ainda não salvou a ordem">Rota não salva</span>') +
+            (c.rotaTravada ? '<span class="selo selo-azul" title="Travada quando o motorista gerou o carregamento">🔒 Rota travada</span>'
+              : c.rotaSalva ? '<span class="selo selo-verde" title="O motorista salvou a ordem das entregas">Rota salva</span>'
+                            : '<span class="selo" title="O motorista ainda não salvou a ordem">Rota não salva</span>') +
           '</div>' +
           '<div class="carga-acoes">' +
             (c.erro
@@ -419,8 +420,10 @@
           }).join('') + '</ul>';
       }
 
-      html += '<div class="det-acoes">' +
+      html += '<div class="det-acoes"><div style="display:flex;gap:8px;flex-wrap:wrap">' +
         '<button class="btn btn-perigo btn-sm" onclick="reiniciarCarregamento(\'' + Util.esc(r.numero) + '\', this)">↺ Reiniciar carregamento</button>' +
+        (r.rotaTravada ? '<button class="btn btn-secundario btn-sm" onclick="destravarRota(\'' + Util.esc(r.numero) + '\', this)">🔓 Destravar rota</button>' : '') +
+        '</div>' +
         '<button class="btn btn-secundario btn-sm" onclick="fecharDetalhe()">Fechar</button></div>';
 
       document.getElementById('detCorpo').innerHTML = html;
@@ -430,8 +433,22 @@
       document.getElementById('modalDetalhe').classList.remove('aberto');
     }
 
+    function destravarRota(numero, btn) {
+      if (!confirm('Destravar a rota da carga ' + numero + '?\n\nO motorista poderá mudar a ordem das entregas. As leituras do carregamento continuam valendo, mas a ordem de carregamento das notas que faltam passa a seguir a nova rota.')) return;
+      btn.disabled = true;
+      Admin.chamar('PAINEL_destravarRota', numero).then(function(r) {
+        if (!r.sucesso) throw new Error(r.erro);
+        Util.toast(r.mensagem);
+        abrirDetalhe(numero);
+        carregar();
+      }).catch(function(e) {
+        btn.disabled = false;
+        Util.toast('Erro: ' + e.message, { erro: true });
+      });
+    }
+
     function reiniciarCarregamento(numero, btn) {
-      if (!confirm('Reiniciar o carregamento da carga ' + numero + '?\n\nTodas as leituras serão apagadas e a conferência começa do zero. Use quando o caminhão for descarregado.')) return;
+      if (!confirm('Reiniciar o carregamento da carga ' + numero + '?\n\nTodas as leituras serão apagadas, a conferência começa do zero e a rota é destravada. Use quando o caminhão for descarregado.')) return;
       btn.disabled = true;
       Admin.chamar('PAINEL_reiniciarCarregamento', numero).then(function(r) {
         if (!r.sucesso) throw new Error(r.erro);

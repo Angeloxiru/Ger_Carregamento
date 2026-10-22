@@ -59,8 +59,8 @@ teste('migração cria tudo e pode rodar de novo', function() {
   amb.configurar();
   const r1 = amb.gas.DB_migrar_();
   const r2 = amb.gas.DB_migrar_();
-  assert.strictEqual(r1.versao, 1);
-  assert.strictEqual(r2.versao, 1);
+  assert.strictEqual(r1.versao, 2);
+  assert.strictEqual(r2.versao, 2);
   assert.strictEqual(contar(amb, 'lkp_resultado_leitura'), 4);
   assert.ok(amb.gas.DB_status_().ok);
 });
@@ -129,7 +129,7 @@ teste('painel lista a carga com resumo do carregamento', function() {
   assert.strictEqual(c.cidades, 2);
   assert.strictEqual(c.rotaSalva, false);
   assert.strictEqual(c.carregamento.status, 'NAO_INICIADO');
-  assert.strictEqual(c.carregamento.qtdEsperada, 13.5);
+  assert.strictEqual(c.carregamento.qtdEsperada, 13);
   assert.strictEqual(c.carregamento.itensSemCodigo, 1);
   assert.ok(/\?carga=C100&token=/.test(c.link));
 });
@@ -217,13 +217,13 @@ teste('mesmo código em dois itens: quantidade distribuída; item sem GTIN confi
   const r = amb.gas.CARREG_registrar('C100', amb.tokenCarreg, [
     leitura(n1002.id, '7891000200206', { quantidade: 4 }),
     leitura(n1002.id, '7891000200206'),
-    leitura(n1002.id, '7891000300305', { quantidade: 2.5, tipo: 'DIGITADO' }),
+    leitura(n1002.id, '7891000300305', { quantidade: 2, tipo: 'DIGITADO' }),
     leitura(n1001.id, '', { tipo: 'CONFIRMACAO', itemId: n1001.itens[1].id, quantidade: 2 })
   ]);
   assert.deepStrictEqual(js(r.resultados.map(function(x) { return x.resultado; })), ['ACEITA', 'ACEITA', 'ACEITA', 'ACEITA']);
   assert.strictEqual(r.lidas[n1002.itens[0].id], 3);
   assert.strictEqual(r.lidas[n1002.itens[1].id], 2);
-  assert.strictEqual(r.lidas[n1002.itens[2].id], 2.5);
+  assert.strictEqual(r.lidas[n1002.itens[2].id], 2);
   assert.strictEqual(r.lidas[n1001.itens[1].id], 2);
   // A leitura de 4 virou duas linhas (3 no primeiro item, 1 no segundo)
   assert.strictEqual(contar(amb, 'carregamento_leitura', "id LIKE 'L%#2'"), 1);
@@ -245,7 +245,7 @@ teste('carregamento finaliza, desfazer reabre, e o painel reinicia', function() 
   const r = amb.gas.CARREG_registrar('C100', amb.tokenCarreg, [
     leitura(n1003.id, '7891000400404'),
     leitura(n1002.id, '7891000200206', { quantidade: 5 }),
-    leitura(n1002.id, '7891000300305', { quantidade: 2.5 }),
+    leitura(n1002.id, '7891000300305', { quantidade: 2 }),
     leitura(n1001.id, '', { tipo: 'CONFIRMACAO', itemId: n1001.itens[1].id, quantidade: 2 }),
     ultima
   ]);
@@ -264,7 +264,7 @@ teste('carregamento finaliza, desfazer reabre, e o painel reinicia', function() 
 
   const lista = amb.gas.PAINEL_listarCargasComLinks(SENHA).cargas[0];
   assert.strictEqual(lista.carregamento.notasCarregadas, 3);
-  assert.strictEqual(lista.carregamento.qtdLida, 13.5);
+  assert.strictEqual(lista.carregamento.qtdLida, 13);
 
   assert.ok(amb.gas.PAINEL_reiniciarCarregamento(SENHA, 'C100').sucesso);
   assert.strictEqual(contar(amb, 'carregamento_leitura'), 0);
@@ -278,6 +278,67 @@ teste('nota nova numa carga já carregada volta o carregamento para em andamento
   amb.gas.PAINEL_uploadXMLs(SENHA, 'C100', arquivosBase64([{ numero: 1005, cliente: 'X', rua: 'R', nro: '1', bairro: 'B', cidade: 'Santa Cruz do Sul',
     itens: [{ cProd: 'E1', xProd: 'Item', cEANTrib: '7891000600601', qTrib: '1' }] }]));
   assert.strictEqual(amb.db.prepare("SELECT status_carregamento s FROM carga").get().s, 'EM_ANDAMENTO');
+});
+
+teste('quantidade é sempre unidade inteira (fração vira inteiro, zero ou vazio vira 1)', function() {
+  const amb = comCarga();
+  salvarOrdem(amb);
+  const n1002 = amb.gas.CARREG_abrir('C100', amb.tokenCarreg).notas[1];
+  const r = amb.gas.CARREG_registrar('C100', amb.tokenCarreg, [
+    leitura(n1002.id, '7891000200206', { quantidade: 2.7 }),
+    leitura(n1002.id, '7891000200206', { quantidade: 0 }),
+    leitura(n1002.id, '7891000200206', { quantidade: '' })
+  ]);
+  assert.strictEqual(r.lidas[n1002.itens[0].id], 3, '2 + 1 no primeiro item');
+  assert.strictEqual(r.lidas[n1002.itens[1].id], 1, 'a terceira leitura vai para o segundo item');
+  assert.strictEqual(contar(amb, 'carregamento_leitura', 'quantidade <> CAST(quantidade AS INTEGER)'), 0);
+});
+
+teste('rota trava ao gerar o carregamento e destrava pelo painel', function() {
+  const amb = comCarga();
+  salvarOrdem(amb);
+  assert.ok(!amb.gas.MOTORISTA_buscarCarga('C100', amb.tokenMotorista).rotaTravada);
+
+  assert.ok(amb.gas.MOTORISTA_carregamento('C100', amb.tokenMotorista).rotaTravada);
+  assert.ok(amb.gas.MOTORISTA_buscarCarga('C100', amb.tokenMotorista).rotaTravada);
+  assert.ok(amb.gas.PAINEL_listarCargasComLinks(SENHA).cargas[0].rotaTravada);
+  const recusa = amb.gas.MOTORISTA_salvarOrdemRota('C100', amb.tokenMotorista, { 1001: 3, 1002: 2, 1003: 1 });
+  assert.ok(!recusa.sucesso && recusa.rotaTravada);
+  assert.strictEqual(amb.db.prepare("SELECT ordem_entrega o FROM nota_fiscal WHERE numero = '1001'").get().o, 1, 'ordem não mudou');
+
+  assert.ok(amb.gas.PAINEL_destravarRota(SENHA, 'C100').sucesso);
+  assert.ok(amb.gas.MOTORISTA_salvarOrdemRota('C100', amb.tokenMotorista, { 1001: 3, 1002: 2, 1003: 1 }).sucesso);
+  const ordem = amb.gas.CARREG_abrir('C100', amb.tokenCarreg).notas.map(function(n) { return n.numero; });
+  assert.deepStrictEqual(js(ordem), ['1001', '1002', '1003'], 'carregamento segue a rota nova, invertida');
+});
+
+teste('reiniciar carregamento e NF nova também destravam a rota', function() {
+  const amb = comCarga();
+  salvarOrdem(amb);
+  amb.gas.MOTORISTA_carregamento('C100', amb.tokenMotorista);
+  amb.gas.PAINEL_reiniciarCarregamento(SENHA, 'C100');
+  assert.ok(!amb.gas.MOTORISTA_buscarCarga('C100', amb.tokenMotorista).rotaTravada);
+
+  amb.gas.MOTORISTA_carregamento('C100', amb.tokenMotorista);
+  amb.gas.PAINEL_uploadXMLs(SENHA, 'C100', arquivosBase64([{ numero: 1006, cliente: 'Y', rua: 'R', nro: '2', bairro: 'B', cidade: 'Santa Cruz do Sul',
+    itens: [{ cProd: 'F1', xProd: 'Item', cEANTrib: '7891000700701', qTrib: '1' }] }]));
+  assert.ok(!amb.gas.MOTORISTA_buscarCarga('C100', amb.tokenMotorista).rotaTravada, 'NF nova precisa entrar na rota');
+  assert.ok(amb.gas.MOTORISTA_carregamento('C100', amb.tokenMotorista).semOrdem);
+});
+
+teste('banco criado na versão 1 recebe a coluna nova ao migrar', function() {
+  const amb = criarAmbiente();
+  amb.configurar();
+  amb.db.exec("CREATE TABLE carga (id INTEGER PRIMARY KEY, numero TEXT NOT NULL UNIQUE, transportadora_id INTEGER, " +
+    "status_carregamento TEXT NOT NULL DEFAULT 'NAO_INICIADO', ordem_salva_em TEXT, carregamento_inicio TEXT, carregamento_fim TEXT, " +
+    "criado_em TEXT NOT NULL DEFAULT '', atualizado_em TEXT NOT NULL DEFAULT '')");
+  amb.db.exec("INSERT INTO carga (numero) VALUES ('C1')");
+  const r = amb.gas.DB_migrar_();
+  assert.strictEqual(r.versao, 2);
+  const cols = amb.db.prepare('SELECT name FROM pragma_table_info(?)').all('carga').map(function(c) { return c.name; });
+  assert.ok(cols.indexOf('rota_travada_em') !== -1);
+  assert.strictEqual(contar(amb, 'carga'), 1, 'dados existentes ficam');
+  amb.gas.DB_migrar_();
 });
 
 teste('entregas: concluir e desfazer', function() {

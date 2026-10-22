@@ -69,8 +69,9 @@ function novoId() {
 
 function agoraIso() { return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'); }
 
+/** Quantidade digitada: só unidades inteiras (0 = campo vazio ou inválido) */
 function numeroQtd(valor) {
-  var v = REGRA_arred_(String(valor || '').replace(',', '.'));
+  var v = parseInt(String(valor || '').replace(/\D/g, ''), 10);
   return v > 0 ? v : 0;
 }
 
@@ -693,7 +694,7 @@ var Tela = {
     }
   });
   campoQtd.addEventListener('input', function() {
-    campoQtd.value = campoQtd.value.replace(/[^\d.,]/g, '');
+    campoQtd.value = campoQtd.value.replace(/\D/g, '');
     Tela.renderizar(); // atualiza o texto dos botões "Confirmar"
   });
   campoQtd.addEventListener('blur', function() { setTimeout(Tela.focar.bind(Tela), 200); });
