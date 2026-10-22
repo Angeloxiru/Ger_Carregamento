@@ -1,0 +1,779 @@
+<script>
+/**
+ * Tela do motorista - Rota Gaúcha 4.0
+ *
+ * - Os dados (com coordenadas) vêm de MOTORISTA_buscarCarga
+ * - A ordem das paradas é calculada aqui pelo Roteirizador (sem API paga)
+ * - O mapa do Google é só para visualizar (1 carregamento por abertura)
+ * - Navegação abre o app do Google Maps pelo link (gratuito)
+ * - O botão Carregar mostra o QR code que o coletor lê para conferir a carga
+ */
+
+// ============================================
+// ESTADO
+// ============================================
+var Estado = {
+  carga: '',
+  token: '',
+  origem: null,       // {endereco, lat, lng}
+  paradas: [],        // na ordem de visita: {id, endereco, bairro, cidade, uf, lat, lng, aproximado, entregas[]}
+  cidades: [],        // ordem das cidades da última otimização
+  alterado: false,    // ordem mudou e ainda não foi salva
+  ordemSalva: false   // a ordem veio do banco
+};
+
+function paradaConcluida(p) {
+  return p.entregas.every(function(e) { return e.concluida; });
+}
+
+function paradasPendentes() {
+  return Estado.paradas.filter(function(p) { return !paradaConcluida(p); });
+}
+
+function buscarParada(id) {
+  return Estado.paradas.filter(function(p) { return p.id === id; })[0];
+}
+
+function textoEndereco(p) {
+  return p.endereco + ', ' + p.bairro + ', ' + p.cidade + ' - ' + p.uf;
+}
+
+// ============================================
+// MONTAGEM DAS PARADAS
+// ============================================
+
+/**
+ * Agrupa entregas no mesmo endereço em uma parada, mantendo a ordem recebida
+ */
+function agruparParadas(entregas) {
+  var mapa = {};
+  var lista = [];
+  entregas.forEach(function(e) {
+    var chave = [e.endereco, e.bairro, e.cidade, e.uf].join('|').toUpperCase().replace(/\s+/g, ' ').trim();
+    if (!mapa[chave]) {
+      mapa[chave] = {
+        id: 'p' + lista.length,
+        endereco: e.endereco,
+        bairro: e.bairro,
+        cidade: e.cidade,
+        uf: e.uf,
+        lat: e.lat,
+        lng: e.lng,
+        aproximado: e.aproximado,
+        entregas: []
+      };
+      lista.push(mapa[chave]);
+    }
+    var p = mapa[chave];
+    if (!Roteirizador.temCoord(p) && Roteirizador.temCoord(e)) {
+      p.lat = e.lat; p.lng = e.lng; p.aproximado = e.aproximado;
+    }
+    p.entregas.push(e);
+  });
+  return lista;
+}
+
+/**
+ * Usa a ordem salva no banco se pelo menos 80% das entregas tiverem ordem
+ */
+function temOrdemSalva(entregas) {
+  var comOrdem = entregas.filter(function(e) { return e.ordem > 0; }).length;
+  return entregas.length > 0 && comOrdem / entregas.length >= 0.8;
+}
+
+/**
+ * Otimiza as paradas pendentes saindo de "partida".
+ * As concluídas ficam no topo, na ordem em que estavam.
+ */
+function otimizarPendentes(partida) {
+  var concluidas = Estado.paradas.filter(paradaConcluida);
+  var pendentes = paradasPendentes();
+  var resultado = Roteirizador.otimizar(partida, pendentes);
+  var porId = {};
+  pendentes.forEach(function(p) { porId[p.id] = p; });
+
+  Estado.paradas = concluidas.concat(resultado.ordem.map(function(id) { return porId[id]; }));
+  Estado.cidades = resultado.cidades;
+}
+
+// ============================================
+// CARREGAMENTO
+// ============================================
+
+function mostrarEstado(icone, titulo, texto, botao) {
+  var tela = document.getElementById('telaEstado');
+  tela.classList.remove('oculto');
+  document.getElementById('app').classList.add('oculto');
+  tela.innerHTML =
+    (icone ? '<div class="icone">' + icone + '</div>' : '<div class="girando"></div>') +
+    (titulo ? '<h2>' + Util.esc(titulo) + '</h2>' : '') +
+    '<p>' + Util.esc(texto) + '</p>' +
+    (botao ? '<button class="btn btn-primario" onclick="' + botao.acao + '">' + Util.esc(botao.rotulo) + '</button>' : '');
+}
+
+function carregar() {
+  var p = window.PARAMS || {};
+  Estado.carga = String(p.carga || '').trim().toUpperCase();
+  Estado.token = String(p.token || '').trim();
+
+  if (!Estado.carga || !Estado.token) {
+    mostrarEstado('🔗', 'Abra pelo link da sua carga',
+      'Esta tela funciona pelo link enviado pelo administrador (normalmente no WhatsApp). Peça o link da sua carga.');
+    return;
+  }
+
+  document.getElementById('subtitulo').textContent = 'Carga ' + Estado.carga;
+  mostrarEstado(null, null, 'Abrindo a carga ' + Estado.carga + '…');
+  Mapa.carregarScript();
+
+  Util.servidor('MOTORISTA_buscarCarga', Estado.carga, Estado.token)
+    .then(function(r) {
+      if (!r.sucesso) {
+        mostrarEstado('🔒', 'Não foi possível abrir a carga', r.erro);
+        return;
+      }
+      iniciar(r);
+    })
+    .catch(function(erro) {
+      mostrarEstado('📶', 'Sem conexão com o servidor', erro.message,
+        { rotulo: 'Tentar de novo', acao: 'carregar()' });
+    });
+}
+
+function iniciar(dados) {
+  Estado.origem = dados.origem;
+  if (dados.transportadora) {
+    document.getElementById('subtitulo').textContent = 'Carga ' + Estado.carga + ' · ' + dados.transportadora;
+  }
+
+  var entregas = dados.entregas;
+  Estado.ordemSalva = temOrdemSalva(entregas);
+
+  if (Estado.ordemSalva) {
+    entregas = entregas.slice().sort(function(a, b) {
+      return (a.ordem || 99999) - (b.ordem || 99999);
+    });
+    Estado.paradas = agruparParadas(entregas);
+  } else {
+    Estado.paradas = agruparParadas(entregas);
+    otimizarPendentes(Estado.origem);
+    Estado.alterado = true;
+  }
+
+  document.getElementById('telaEstado').classList.add('oculto');
+  document.getElementById('app').classList.remove('oculto');
+
+  Tela.restaurarPreferencias();
+  Tela.renderizar();
+  Mapa.quandoPronto(function() {
+    Mapa.criar();
+    Mapa.desenhar(true);
+  });
+}
+
+// ============================================
+// TELA
+// ============================================
+var Tela = {
+
+  renderizar: function() {
+    this.resumo();
+    this.lista();
+    this.legenda();
+    var btn = document.getElementById('btnSalvar');
+    btn.classList.toggle('pendente', Estado.alterado);
+  },
+
+  resumo: function() {
+    var total = Estado.paradas.length;
+    var concl = Estado.paradas.filter(paradaConcluida).length;
+    var pct = total ? Math.round(concl / total * 100) : 0;
+    var entregas = [];
+    Estado.paradas.forEach(function(p) { entregas = entregas.concat(p.entregas); });
+    var entregasOk = entregas.filter(function(e) { return e.concluida; }).length;
+    var pesoPendente = entregas.filter(function(e) { return !e.concluida; })
+      .reduce(function(a, e) { return a + (e.peso || 0); }, 0);
+
+    // Estimativa do que falta: da última parada concluída (ou da partida) até o fim
+    var concluidas = Estado.paradas.filter(paradaConcluida).filter(Roteirizador.temCoord);
+    var pontoAtual = concluidas.length ? concluidas[concluidas.length - 1] : Estado.origem;
+    var est = Roteirizador.estimarRota(pontoAtual, paradasPendentes());
+
+    document.getElementById('progressoTexto').textContent = concl + ' de ' + total + (total === 1 ? ' parada' : ' paradas');
+    document.getElementById('progressoPct').textContent = pct + '%';
+    document.getElementById('progressoBarra').style.width = pct + '%';
+    document.getElementById('kmRestante').textContent = est.distancia ? Util.km(est.distancia) : '–';
+    document.getElementById('tempoRestante').textContent = est.tempo ? Util.tempo(est.tempo) : '–';
+    document.getElementById('entregasTexto').textContent = entregasOk + '/' + entregas.length;
+    document.getElementById('pesoTexto').textContent = Util.peso(pesoPendente);
+  },
+
+  legenda: function() {
+    var partes = [];
+    var cidades = [];
+    paradasPendentes().forEach(function(p) {
+      var c = String(p.cidade).trim();
+      if (cidades.indexOf(c) === -1) cidades.push(c);
+    });
+    if (cidades.length > 1) partes.push('Cidades: ' + cidades.join(' → '));
+    partes.push('km e tempo são estimativas em linha reta');
+    document.getElementById('legendaRota').textContent = partes.join(' · ');
+  },
+
+  lista: function() {
+    var lista = document.getElementById('listaParadas');
+    var aviso = document.getElementById('avisoOrdem');
+    var pendentes = paradasPendentes();
+    var proxima = pendentes[0];
+
+    var textoAviso = '';
+    var classeAviso = 'aviso';
+    if (Estado.paradas.length > 0 && pendentes.length === 0) {
+      textoAviso = '🎉 <div><strong>Todas as entregas foram concluídas!</strong> Bom retorno.</div>';
+      classeAviso = 'aviso aviso-info';
+    } else if (Estado.alterado && !Estado.ordemSalva) {
+      textoAviso = '💡 <div>Rota calculada automaticamente. Ajuste com ▲▼ se precisar e toque em <strong>Salvar</strong>. Depois use <strong>Carregar</strong> para gerar o QR code do carregamento.</div>';
+    } else if (Estado.alterado) {
+      textoAviso = '✏️ <div>A ordem mudou. Toque em <strong>Salvar</strong> para gravar.</div>';
+    }
+    aviso.className = classeAviso + (textoAviso ? '' : ' oculto');
+    aviso.innerHTML = textoAviso;
+
+    if (Estado.paradas.length === 0) {
+      lista.innerHTML = '<div class="estado-vazio"><div class="icone">📭</div><h3>Nenhuma entrega</h3></div>';
+      return;
+    }
+
+    lista.innerHTML = Estado.paradas.map(function(p, i) {
+      var concluida = paradaConcluida(p);
+      var ehProxima = p === proxima;
+      var destinatarios = [];
+      p.entregas.forEach(function(e) { if (destinatarios.indexOf(e.destinatario) === -1) destinatarios.push(e.destinatario); });
+      var titulo = destinatarios.length === 1 ? destinatarios[0] : destinatarios.length + ' destinatários';
+      var avista = p.entregas.some(function(e) {
+        return !e.concluida && /^\s*[AÀ]\s*VISTA\s*$/i.test(e.condicaoPagamento || '');
+      });
+
+      var selos = '';
+      if (ehProxima) selos += '<span class="selo selo-amarelo">Próxima</span>';
+      if (concluida) selos += '<span class="selo selo-verde">✓ Entregue</span>';
+      selos += '<span class="selo">' + Util.esc(p.cidade) + '</span>';
+      if (avista) selos += '<span class="selo selo-vermelho">💰 Cobrar à vista</span>';
+      if (!Roteirizador.temCoord(p)) selos += '<span class="selo selo-vermelho" title="Endereço não encontrado no mapa">Sem localização</span>';
+      else if (p.aproximado) selos += '<span class="selo" title="O mapa encontrou só a cidade ou o bairro">📍 Local aproximado</span>';
+
+      var nfs = p.entregas.map(function(e) {
+        return '<li>' + (e.concluida ? '<span class="ok">✓</span>' : '') +
+          '<span class="nf">NF ' + Util.esc(e.numeroNF) + '</span>' +
+          (destinatarios.length > 1 ? '<span class="quem">' + Util.esc(e.destinatario) + '</span>' : '<span class="quem"></span>') +
+          '<span class="kg">' + Util.peso(e.peso || 0) + '</span></li>';
+      }).join('');
+
+      var podeSubir = !concluida && i > 0 && !paradaConcluida(Estado.paradas[i - 1]);
+      var podeDescer = !concluida && i < Estado.paradas.length - 1;
+
+      var acoes = concluida
+        ? '<button class="btn btn-secundario principal" onclick="Tela.reabrir(\'' + p.id + '\', this)">↩ Desfazer entrega</button>'
+        : '<button class="btn btn-azul principal" onclick="Tela.navegar(\'' + p.id + '\')">🧭 Navegar</button>' +
+          '<button class="btn btn-primario principal" onclick="Tela.concluir(\'' + p.id + '\', this)">✓ Entregue</button>';
+
+      var ordem = concluida ? '' :
+        '<div class="ordem-btns">' +
+          '<button class="btn btn-secundario" ' + (podeSubir ? '' : 'disabled') + ' onclick="Tela.mover(\'' + p.id + '\', -1)" aria-label="Subir parada">▲</button>' +
+          '<button class="btn btn-secundario" ' + (podeDescer ? '' : 'disabled') + ' onclick="Tela.mover(\'' + p.id + '\', 1)" aria-label="Descer parada">▼</button>' +
+        '</div>';
+
+      return '<article class="parada' + (concluida ? ' concluida' : '') + (ehProxima ? ' proxima' : '') + '" id="' + p.id + '">' +
+        '<div class="parada-num">' + (i + 1) + '</div>' +
+        '<div class="parada-corpo" onclick="Mapa.focar(\'' + p.id + '\')" title="Ver no mapa">' +
+          '<div class="parada-selos">' + selos + '</div>' +
+          '<h3 class="parada-dest">' + Util.esc(titulo) + '</h3>' +
+          '<p class="parada-end">' + Util.esc(p.endereco) + (p.bairro ? ' · ' + Util.esc(p.bairro) : '') + '</p>' +
+        '</div>' +
+        '<ul class="parada-nfs">' + nfs + '</ul>' +
+        '<div class="parada-acoes">' + acoes + ordem + '</div>' +
+      '</article>';
+    }).join('');
+  },
+
+  /** Atualiza tela e mapa depois de qualquer mudança */
+  atualizar: function(ajustarZoom) {
+    this.renderizar();
+    Mapa.desenhar(ajustarZoom);
+  },
+
+  destacar: function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('destaque');
+    setTimeout(function() { el.classList.remove('destaque'); }, 1800);
+  },
+
+  // ---------- Ações ----------
+
+  mover: function(id, direcao) {
+    var i = Estado.paradas.indexOf(buscarParada(id));
+    var j = i + direcao;
+    if (i < 0 || j < 0 || j >= Estado.paradas.length) return;
+    if (paradaConcluida(Estado.paradas[j])) return;
+
+    var tmp = Estado.paradas[i];
+    Estado.paradas[i] = Estado.paradas[j];
+    Estado.paradas[j] = tmp;
+    Estado.alterado = true;
+    this.atualizar(false);
+    var el = document.getElementById(id);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  },
+
+  concluir: function(id, btn) {
+    var p = buscarParada(id);
+    var nfs = p.entregas.filter(function(e) { return !e.concluida; }).map(function(e) { return e.numeroNF; });
+    if (nfs.length === 0) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Salvando…';
+    Util.servidor('MOTORISTA_concluirEntregas', Estado.carga, Estado.token, nfs)
+      .then(function(r) {
+        if (!r.sucesso) throw new Error(r.erro);
+        p.entregas.forEach(function(e) { if (nfs.indexOf(e.numeroNF) !== -1) e.concluida = true; });
+        if (navigator.vibrate) navigator.vibrate(30);
+        Tela.atualizar(false);
+
+        var proxima = paradasPendentes()[0];
+        if (proxima) Tela.destacar(proxima.id);
+        Util.toast('✓ Parada entregue (' + nfs.length + ' NF)', {
+          acao: { rotulo: 'Desfazer', executar: function() { Tela.reabrir(id, null, nfs); } }
+        });
+      })
+      .catch(function(e) {
+        btn.disabled = false;
+        btn.textContent = '✓ Entregue';
+        Util.toast('Não salvou: ' + e.message, { erro: true });
+      });
+  },
+
+  reabrir: function(id, btn, nfsEspecificas) {
+    var p = buscarParada(id);
+    var nfs = nfsEspecificas || p.entregas.filter(function(e) { return e.concluida; }).map(function(e) { return e.numeroNF; });
+    if (!nfsEspecificas && !confirm('Desfazer a entrega desta parada?')) return;
+    if (btn) btn.disabled = true;
+
+    Util.servidor('MOTORISTA_reabrirEntregas', Estado.carga, Estado.token, nfs)
+      .then(function(r) {
+        if (!r.sucesso) throw new Error(r.erro);
+        p.entregas.forEach(function(e) { if (nfs.indexOf(e.numeroNF) !== -1) e.concluida = false; });
+        // Volta a parada para o início das pendentes
+        Estado.paradas.splice(Estado.paradas.indexOf(p), 1);
+        var pos = Estado.paradas.filter(paradaConcluida).length;
+        Estado.paradas.splice(pos, 0, p);
+        Tela.atualizar(false);
+        Util.toast('Entrega desfeita');
+      })
+      .catch(function(e) {
+        if (btn) btn.disabled = false;
+        Util.toast('Não foi possível desfazer: ' + e.message, { erro: true });
+      });
+  },
+
+  navegar: function(id) {
+    var p = buscarParada(id);
+    var url = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' +
+              encodeURIComponent(textoEndereco(p));
+    window.open(url, '_blank');
+  },
+
+  /** Abre as próximas paradas no app do Google Maps (até 4 por limite dos celulares) */
+  abrirRotaMaps: function() {
+    var proximas = paradasPendentes().slice(0, 4);
+    if (proximas.length === 0) { Util.toast('Não há paradas pendentes'); return; }
+
+    var destino = proximas[proximas.length - 1];
+    var url = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' +
+              encodeURIComponent(textoEndereco(destino));
+    if (proximas.length > 1) {
+      url += '&waypoints=' + proximas.slice(0, -1).map(function(p) {
+        return encodeURIComponent(textoEndereco(p));
+      }).join('%7C');
+    }
+    window.open(url, '_blank');
+  },
+
+  recalcular: function() {
+    if (paradasPendentes().length < 2) { Util.toast('Poucas paradas para recalcular'); return; }
+    if (!confirm('Recalcular a ordem das paradas que faltam?\n\nA rota parte da sua posição atual (se o celular permitir) ou da última entrega feita.')) return;
+
+    Util.toast('Calculando…', { duracao: 1500 });
+    obterPosicaoAtual().then(function(posicao) {
+      var concluidas = Estado.paradas.filter(paradaConcluida).filter(Roteirizador.temCoord);
+      var partida = posicao || (concluidas.length ? concluidas[concluidas.length - 1] : Estado.origem);
+      otimizarPendentes(partida);
+      Estado.alterado = true;
+      Tela.atualizar(true);
+      Util.toast('Rota recalculada' + (posicao ? ' a partir da sua posição' : '') + '. Toque em Salvar para gravar.');
+    });
+  },
+
+  salvar: function() {
+    var btn = document.getElementById('btnSalvar');
+    var ordemPorNF = {};
+    var n = 1;
+    Estado.paradas.forEach(function(p) {
+      p.entregas.forEach(function(e) { ordemPorNF[e.numeroNF] = n++; });
+    });
+
+    btn.disabled = true;
+    // Devolve true se salvou (usado também pelo botão Carregar)
+    return Util.servidor('MOTORISTA_salvarOrdemRota', Estado.carga, Estado.token, ordemPorNF)
+      .then(function(r) {
+        if (!r.sucesso) throw new Error(r.erro);
+        Estado.alterado = false;
+        Estado.ordemSalva = true;
+        Tela.renderizar();
+        Util.toast('✓ ' + r.mensagem);
+        return true;
+      })
+      .catch(function(e) {
+        Util.toast('Não salvou: ' + e.message, { erro: true });
+        return false;
+      })
+      .then(function(salvou) { btn.disabled = false; return salvou; });
+  },
+
+  alternarMapa: function() {
+    var caixa = document.getElementById('mapaCaixa');
+    var compacto = caixa.classList.toggle('compacto');
+    document.getElementById('btnMapaTamanho').textContent = compacto ? 'Expandir mapa' : 'Compactar mapa';
+    try { localStorage.setItem('rg_mapa_compacto', compacto ? '1' : '0'); } catch (e) {}
+  },
+
+  restaurarPreferencias: function() {
+    var compacto = false;
+    try { compacto = localStorage.getItem('rg_mapa_compacto') === '1'; } catch (e) {}
+    if (compacto) {
+      document.getElementById('mapaCaixa').classList.add('compacto');
+      document.getElementById('btnMapaTamanho').textContent = 'Expandir mapa';
+    }
+  }
+};
+
+/**
+ * Posição do celular (se o navegador permitir). Resolve null em caso de falha.
+ */
+function obterPosicaoAtual() {
+  return new Promise(function(resolve) {
+    if (!navigator.geolocation) return resolve(null);
+    var feito = false;
+    var fim = function(v) { if (!feito) { feito = true; resolve(v); } };
+    setTimeout(function() { fim(null); }, 8000);
+    try {
+      navigator.geolocation.getCurrentPosition(
+        function(pos) { fim({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
+        function() { fim(null); },
+        { enableHighAccuracy: true, timeout: 7000, maximumAge: 60000 }
+      );
+    } catch (e) { fim(null); }
+  });
+}
+
+// ============================================
+// MAPA (Google Maps JavaScript API, só visualização)
+// ============================================
+var Mapa = {
+  mapa: null,
+  marcadores: {},
+  linha: null,
+  marcadorOrigem: null,
+  pronto: false,
+  fila: [],
+
+  carregarScript: function() {
+    var chave = (window.PARAMS || {}).mapsApiKey;
+    if (!chave) {
+      this.semMapa('Mapa não configurado. A lista de paradas funciona normalmente.');
+      return;
+    }
+    window.__mapaCarregado = function() { Mapa.pronto = true; Mapa.fila.forEach(function(f) { f(); }); Mapa.fila = []; };
+    window.gm_authFailure = function() { Mapa.semMapa('O mapa não pôde ser carregado (chave do Google Maps inválida ou restrita).'); };
+
+    var s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(chave) +
+            '&callback=__mapaCarregado&language=pt-BR&region=BR';
+    s.async = true;
+    s.onerror = function() { Mapa.semMapa('Sem conexão para carregar o mapa.'); };
+    document.head.appendChild(s);
+  },
+
+  quandoPronto: function(fn) {
+    if (this.pronto) fn(); else this.fila.push(fn);
+  },
+
+  semMapa: function(texto) {
+    var el = document.getElementById('mapa');
+    if (el) el.innerHTML = '<div class="mapa-vazio">🗺️<br>' + Util.esc(texto) + '</div>';
+  },
+
+  estilosEscuros: [
+    { elementType: 'geometry', stylers: [{ color: '#1d2520' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#a9b4ad' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#1d2520' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#36423b' }] },
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#4b5a51' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1a24' }] },
+    { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+    { featureType: 'transit', stylers: [{ visibility: 'off' }] }
+  ],
+
+  estilosClaros: [
+    { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+    { featureType: 'transit', stylers: [{ visibility: 'off' }] }
+  ],
+
+  aplicarTema: function() {
+    if (!this.mapa) return;
+    var escuro = document.documentElement.getAttribute('data-tema') === 'escuro';
+    this.mapa.setOptions({ styles: escuro ? this.estilosEscuros : this.estilosClaros });
+  },
+
+  criar: function() {
+    this.mapa = new google.maps.Map(document.getElementById('mapa'), {
+      center: { lat: -29.7177, lng: -52.4258 },
+      zoom: 9,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: true,
+      clickableIcons: false,
+      gestureHandling: 'greedy'
+    });
+    this.aplicarTema();
+  },
+
+  icone: function(texto, cor, corTexto, tamanho) {
+    var t = tamanho;
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + t + '" height="' + t + '" viewBox="0 0 40 40">' +
+      '<circle cx="20" cy="20" r="18" fill="' + cor + '" stroke="#fff" stroke-width="3"/>' +
+      '<text x="20" y="26" text-anchor="middle" font-family="Arial,sans-serif" font-size="' + (String(texto).length > 2 ? 13 : 16) + '" font-weight="700" fill="' + corTexto + '">' + texto + '</text></svg>';
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      scaledSize: new google.maps.Size(t, t),
+      anchor: new google.maps.Point(t / 2, t / 2)
+    };
+  },
+
+  /** Desenha marcadores e a linha da rota na ordem atual */
+  desenhar: function(ajustarZoom) {
+    if (!this.mapa) return;
+    var self = this;
+
+    Object.keys(this.marcadores).forEach(function(k) { self.marcadores[k].setMap(null); });
+    this.marcadores = {};
+    if (this.linha) this.linha.setMap(null);
+    if (this.marcadorOrigem) this.marcadorOrigem.setMap(null);
+
+    var bounds = new google.maps.LatLngBounds();
+    var proxima = paradasPendentes()[0];
+    var caminho = [];
+
+    if (Roteirizador.temCoord(Estado.origem)) {
+      this.marcadorOrigem = new google.maps.Marker({
+        position: { lat: Estado.origem.lat, lng: Estado.origem.lng },
+        map: this.mapa,
+        icon: this.icone('🏭', '#56615B', '#fff', 34),
+        title: 'Partida: ' + Estado.origem.endereco,
+        zIndex: 1
+      });
+      bounds.extend(this.marcadorOrigem.getPosition());
+    }
+
+    Estado.paradas.forEach(function(p, i) {
+      if (!Roteirizador.temCoord(p)) return;
+      var concluida = paradaConcluida(p);
+      var ehProxima = p === proxima;
+      var cor = concluida ? '#8A948E' : (ehProxima ? '#FFC72C' : '#007A33');
+      var corTexto = ehProxima ? '#3A2A00' : '#fff';
+
+      var m = new google.maps.Marker({
+        position: { lat: p.lat, lng: p.lng },
+        map: self.mapa,
+        icon: self.icone(i + 1, cor, corTexto, ehProxima ? 42 : 34),
+        title: (i + 1) + '. ' + p.entregas[0].destinatario,
+        zIndex: ehProxima ? 1000 : (concluida ? 10 : 100 + (Estado.paradas.length - i))
+      });
+      m.addListener('click', function() { Tela.destacar(p.id); });
+      self.marcadores[p.id] = m;
+      if (!concluida) {
+        caminho.push(m.getPosition());
+        bounds.extend(m.getPosition());
+      }
+    });
+
+    // Linha da posição atual (última concluída ou partida) até o fim
+    var concluidas = Estado.paradas.filter(paradaConcluida).filter(Roteirizador.temCoord);
+    var inicio = concluidas.length ? concluidas[concluidas.length - 1] : Estado.origem;
+    if (Roteirizador.temCoord(inicio) && caminho.length) caminho.unshift(new google.maps.LatLng(inicio.lat, inicio.lng));
+
+    if (caminho.length > 1) {
+      this.linha = new google.maps.Polyline({
+        path: caminho,
+        map: this.mapa,
+        strokeColor: '#007A33',
+        strokeOpacity: 0.75,
+        strokeWeight: 4,
+        icons: [{
+          icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2.6, strokeColor: '#005C26', fillColor: '#005C26', fillOpacity: 1 },
+          offset: '60px',
+          repeat: '140px'
+        }]
+      });
+    }
+
+    if (ajustarZoom && !bounds.isEmpty()) {
+      this.mapa.fitBounds(bounds, 40);
+    }
+  },
+
+  focar: function(id) {
+    var m = this.marcadores[id];
+    if (!m || !this.mapa) return;
+    this.mapa.panTo(m.getPosition());
+    if (this.mapa.getZoom() < 15) this.mapa.setZoom(15);
+    m.setAnimation(google.maps.Animation.BOUNCE);
+    setTimeout(function() { m.setAnimation(null); }, 1400);
+    if (window.innerWidth < 900) {
+      document.getElementById('mapaCaixa').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+};
+
+// ============================================
+// CARREGAMENTO (QR code para o coletor)
+// ============================================
+var Carregamento = {
+  timer: null,
+  link: '',
+
+  abrir: function() {
+    var self = this;
+    var antes = Promise.resolve(true);
+
+    // O carregamento segue a ordem inversa da rota: a ordem precisa estar salva
+    if (Estado.alterado) {
+      if (!confirm('A ordem das paradas ainda não foi salva.\n\nO caminhão é carregado na ordem inversa da rota (a última entrega entra primeiro). Salvar a ordem agora?')) return;
+      antes = Tela.salvar();
+    }
+
+    antes.then(function(ok) {
+      if (!ok) return;
+      document.getElementById('qrCorpo').innerHTML = '<div class="girando"></div>';
+      document.getElementById('modalCarregamento').classList.add('aberto');
+      self.atualizar(true);
+      clearInterval(self.timer);
+      self.timer = setInterval(function() { self.atualizar(false); }, 10000);
+    });
+  },
+
+  fechar: function() {
+    clearInterval(this.timer);
+    this.timer = null;
+    document.getElementById('modalCarregamento').classList.remove('aberto');
+  },
+
+  atualizar: function(primeiraVez) {
+    var self = this;
+    Util.servidor('MOTORISTA_carregamento', Estado.carga, Estado.token)
+      .then(function(r) {
+        if (!r.sucesso && r.semOrdem && primeiraVez) {
+          // Ex: chegou NF nova depois que a rota foi salva
+          document.getElementById('qrCorpo').innerHTML =
+            '<div class="aviso">' + Util.esc(r.erro) + '</div>' +
+            '<button class="btn btn-primario" onclick="Carregamento.salvarEGerar()">💾 Salvar ordem e gerar QR code</button>';
+          return;
+        }
+        if (!r.sucesso) throw new Error(r.erro);
+        self.link = r.link;
+        self.desenhar(r, primeiraVez);
+      })
+      .catch(function(e) {
+        if (!primeiraVez) return; // falha no acompanhamento: tenta de novo no próximo ciclo
+        document.getElementById('qrCorpo').innerHTML =
+          '<div class="aviso aviso-erro">' + Util.esc(e.message) + '</div>';
+      });
+  },
+
+  desenhar: function(r, primeiraVez) {
+    var pct = r.qtdEsperada ? Math.min(100, Math.round(r.qtdLida / r.qtdEsperada * 100)) : 0;
+    var classe = r.status === 'FINALIZADO' ? 'selo-verde' : (r.status === 'EM_ANDAMENTO' ? 'selo-amarelo' : 'selo-azul');
+    var status =
+      '<div class="qr-status">' +
+        '<div class="resumo-linha"><span class="selo ' + classe + '">' + Util.esc(r.statusDescricao) + '</span>' +
+          '<span>' + r.notasCarregadas + ' de ' + r.notas + ' notas · ' + pct + '%</span></div>' +
+        '<div class="progresso"><span style="width:' + pct + '%"></span></div>' +
+      '</div>';
+
+    if (!primeiraVez) {
+      var atual = document.querySelector('#qrCorpo .qr-status');
+      if (atual) atual.outerHTML = status;
+      if (r.status === 'FINALIZADO') Util.toast('🎉 Carregamento finalizado!');
+      if (r.status === 'FINALIZADO') clearInterval(this.timer);
+      return;
+    }
+
+    var imagem = '';
+    try {
+      var qr = qrcode(0, 'M');
+      qr.addData(r.link);
+      qr.make();
+      imagem = '<img class="qr-imagem" alt="QR code do carregamento" src="' + qr.createDataURL(8, 4) + '">';
+    } catch (e) {
+      imagem = '<div class="aviso aviso-erro">Não foi possível desenhar o QR code. Use o botão Copiar link.</div>';
+    }
+
+    document.getElementById('qrCorpo').innerHTML =
+      imagem +
+      '<p class="qr-instrucao">Mostre esta tela para o conferente ler com o <strong>coletor</strong>. ' +
+        'As notas aparecem na ordem inversa da rota: a última entrega entra primeiro no caminhão.</p>' +
+      status +
+      '<div class="qr-acoes">' +
+        '<button class="btn btn-secundario btn-sm" onclick="Carregamento.copiar(this)">Copiar link</button>' +
+        '<button class="btn btn-whats btn-sm" onclick="Carregamento.whats()">WhatsApp</button>' +
+      '</div>';
+  },
+
+  salvarEGerar: function() {
+    var self = this;
+    document.getElementById('qrCorpo').innerHTML = '<div class="girando"></div>';
+    Tela.salvar().then(function(ok) {
+      if (ok) self.atualizar(true);
+      else self.fechar();
+    });
+  },
+
+  copiar: function(btn) {
+    var link = this.link;
+    Util.copiar(link).then(function() {
+      btn.textContent = '✓ Copiado';
+      setTimeout(function() { btn.textContent = 'Copiar link'; }, 1800);
+    }).catch(function() { window.prompt('Copie o link:', link); });
+  },
+
+  whats: function() {
+    var msg = '📦 *Carregamento ' + Estado.carga + '*\n\nAbra no coletor para conferir a carga:\n\n' + this.link;
+    window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+  }
+};
+
+document.getElementById('modalCarregamento').addEventListener('click', function(e) {
+  if (e.target === this) Carregamento.fechar();
+});
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') Carregamento.fechar(); });
+
+// ============================================
+// INÍCIO
+// ============================================
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', carregar);
+} else {
+  carregar();
+}
+</script>

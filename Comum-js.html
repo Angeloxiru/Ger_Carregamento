@@ -1,0 +1,221 @@
+<script>
+/**
+ * Funções comuns às telas (painel, uso de API e motorista)
+ */
+var Util = (function() {
+
+  /** Escapa texto para inserir em HTML */
+  function esc(texto) {
+    return String(texto === null || texto === undefined ? '' : texto)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /**
+   * Chama uma função do servidor e devolve uma Promise
+   * Ex: Util.servidor('MOTORISTA_buscarCarga', carga, token).then(...)
+   */
+  function servidor(nomeFuncao) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function(resolve, reject) {
+      var runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function(erro) {
+          reject(erro instanceof Error ? erro : new Error(String(erro && erro.message || erro)));
+        });
+      runner[nomeFuncao].apply(runner, args);
+    });
+  }
+
+  /** Mensagem rápida no rodapé da tela */
+  function toast(mensagem, opcoes) {
+    opcoes = opcoes || {};
+    var area = document.getElementById('toasts');
+    if (!area) {
+      area = document.createElement('div');
+      area.id = 'toasts';
+      area.className = 'toasts';
+      area.setAttribute('role', 'status');
+      area.setAttribute('aria-live', 'polite');
+      document.body.appendChild(area);
+    }
+
+    var el = document.createElement('div');
+    el.className = 'toast' + (opcoes.erro ? ' toast-erro' : '');
+    var texto = document.createElement('span');
+    texto.className = 'toast-texto';
+    texto.textContent = mensagem;
+    el.appendChild(texto);
+
+    var fechar = function() { if (el.parentNode) el.parentNode.removeChild(el); };
+
+    if (opcoes.acao) {
+      var btn = document.createElement('button');
+      btn.className = 'btn btn-sm';
+      btn.textContent = opcoes.acao.rotulo;
+      btn.onclick = function() { fechar(); opcoes.acao.executar(); };
+      el.appendChild(btn);
+    }
+
+    area.appendChild(el);
+    setTimeout(fechar, opcoes.duracao || (opcoes.acao ? 7000 : 3500));
+  }
+
+  function numero(valor, casas) {
+    return Number(valor || 0).toLocaleString('pt-BR', {
+      minimumFractionDigits: casas || 0,
+      maximumFractionDigits: casas || 0
+    });
+  }
+
+  function km(metros) {
+    var v = metros / 1000;
+    return numero(v, v < 10 ? 1 : 0) + ' km';
+  }
+
+  function tempo(segundos) {
+    var min = Math.round(segundos / 60);
+    var h = Math.floor(min / 60);
+    var m = min % 60;
+    return h > 0 ? h + 'h' + String(m).padStart(2, '0') : m + ' min';
+  }
+
+  function peso(kg) {
+    return kg >= 1000 ? numero(kg / 1000, 2) + ' t' : numero(kg, kg % 1 ? 1 : 0) + ' kg';
+  }
+
+  /** Copia texto para a área de transferência */
+  function copiar(texto) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(texto);
+    }
+    return new Promise(function(resolve, reject) {
+      var ta = document.createElement('textarea');
+      ta.value = texto;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy') ? resolve() : reject(new Error('cópia bloqueada')); }
+      catch (e) { reject(e); }
+      document.body.removeChild(ta);
+    });
+  }
+
+  /** Tema claro/escuro (lembra a escolha no aparelho) */
+  function aplicarTema(tema) {
+    document.documentElement.setAttribute('data-tema', tema);
+    try { localStorage.setItem('rg_tema', tema); } catch (e) {}
+  }
+
+  function temaInicial() {
+    var salvo = null;
+    try { salvo = localStorage.getItem('rg_tema'); } catch (e) {}
+    if (salvo) return salvo;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'escuro' : 'claro';
+  }
+
+  function alternarTema() {
+    var atual = document.documentElement.getAttribute('data-tema') === 'escuro' ? 'claro' : 'escuro';
+    aplicarTema(atual);
+    return atual;
+  }
+
+  aplicarTema(temaInicial());
+
+  return {
+    esc: esc,
+    servidor: servidor,
+    toast: toast,
+    numero: numero,
+    km: km,
+    tempo: tempo,
+    peso: peso,
+    copiar: copiar,
+    alternarTema: alternarTema
+  };
+})();
+
+/**
+ * Login do painel (usado pelas páginas de administração)
+ * A senha fica só na sessão do navegador e é enviada em cada chamada.
+ */
+var Admin = (function() {
+  var CHAVE = 'rg_senha_painel';
+
+  function senha() {
+    try { return sessionStorage.getItem(CHAVE) || ''; } catch (e) { return ''; }
+  }
+
+  function sair() {
+    try { sessionStorage.removeItem(CHAVE); } catch (e) {}
+    location.reload();
+  }
+
+  /** Erro de senha → volta para a tela de login */
+  function tratarErro(erro) {
+    var msg = String(erro && erro.message || erro);
+    if (/SENHA_INVALIDA|SEM_SENHA|BLOQUEADO/.test(msg)) {
+      try { sessionStorage.removeItem(CHAVE); } catch (e) {}
+      mostrarLogin(msg.replace(/^[A-Z_]+:\s*/, ''));
+      return true;
+    }
+    return false;
+  }
+
+  /** Chamada ao servidor com a senha como primeiro parâmetro */
+  function chamar(nomeFuncao) {
+    var args = [nomeFuncao, senha()].concat(Array.prototype.slice.call(arguments, 1));
+    return Util.servidor.apply(null, args).catch(function(erro) {
+      if (!tratarErro(erro)) throw erro;
+      return new Promise(function() {}); // interrompe a cadeia: o login assume
+    });
+  }
+
+  function mostrarLogin(mensagem) {
+    var tela = document.getElementById('telaLogin');
+    document.getElementById('app').classList.add('oculto');
+    tela.classList.remove('oculto');
+    var erro = document.getElementById('loginErro');
+    erro.textContent = mensagem || '';
+    erro.classList.toggle('oculto', !mensagem);
+    setTimeout(function() { document.getElementById('loginSenha').focus(); }, 50);
+  }
+
+  /**
+   * Inicia a página: pede a senha se necessário e depois chama aoEntrar()
+   */
+  function iniciar(aoEntrar) {
+    var form = document.getElementById('formLogin');
+    form.addEventListener('submit', function(ev) {
+      ev.preventDefault();
+      var campo = document.getElementById('loginSenha');
+      var btn = form.querySelector('button[type=submit]');
+      btn.disabled = true;
+      Util.servidor('PAINEL_login', campo.value)
+        .then(function() {
+          try { sessionStorage.setItem(CHAVE, campo.value); } catch (e) {}
+          campo.value = '';
+          document.getElementById('telaLogin').classList.add('oculto');
+          document.getElementById('app').classList.remove('oculto');
+          aoEntrar();
+        })
+        .catch(function(erro) {
+          var msg = String(erro.message || erro).replace(/^[A-Z_]+:\s*/, '');
+          document.getElementById('loginErro').textContent = msg;
+          document.getElementById('loginErro').classList.remove('oculto');
+        })
+        .then(function() { btn.disabled = false; });
+    });
+
+    if (senha()) {
+      document.getElementById('app').classList.remove('oculto');
+      aoEntrar();
+    } else {
+      mostrarLogin();
+    }
+  }
+
+  return { chamar: chamar, iniciar: iniciar, sair: sair };
+})();
+</script>

@@ -1,0 +1,282 @@
+<style>
+/**
+ * Estilos da tela do motorista (mobile primeiro)
+ * Letras e botões grandes para usar dentro do caminhão.
+ */
+body { font-size: 17px; }
+
+.topo-conteudo { padding: 10px 16px 14px; max-width: 1440px; }
+
+/* ============ ESTADO (carregando, erro, sem link) ============ */
+.tela-estado {
+  min-height: calc(100dvh - 70px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  color: var(--texto-2);
+}
+.tela-estado .icone { font-size: 52px; }
+.tela-estado h2 { margin: 0; color: var(--texto); font-size: 22px; }
+.tela-estado p { margin: 0; max-width: 420px; }
+
+/* ============ RESUMO ============ */
+.resumo {
+  background: var(--superficie);
+  border-bottom: 1px solid var(--borda);
+  padding: 14px 16px;
+  display: grid;
+  gap: 12px;
+}
+.resumo-linha { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.resumo-linha strong { font-size: 18px; }
+.resumo-linha span { color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.resumo .progresso { height: 10px; }
+.resumo-numeros {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.resumo-numeros > div {
+  background: var(--superficie-2);
+  border-radius: var(--raio-sm);
+  padding: 8px 8px;
+  min-width: 0;
+}
+.resumo-numeros .rotulo {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--texto-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.resumo-numeros strong {
+  display: block;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============ LAYOUT ============ */
+.layout { display: flex; flex-direction: column; }
+
+.mapa-caixa { position: relative; height: 42dvh; min-height: 220px; transition: height .25s ease; }
+.mapa-caixa.compacto { height: 22dvh; min-height: 150px; }
+.mapa { position: absolute; inset: 0; z-index: 0; background: var(--superficie-2); }
+.mapa-vazio {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  text-align: center; padding: 20px;
+  color: var(--texto-3); font-size: 14px;
+}
+.mapa-tamanho {
+  position: absolute;
+  left: 10px; top: 10px;
+  box-shadow: var(--sombra-forte);
+  z-index: 2;
+}
+.legenda {
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--texto-2);
+  background: var(--superficie);
+  border-bottom: 1px solid var(--borda);
+}
+.legenda:empty { display: none; }
+
+.coluna-lista { padding: 12px 12px 110px; }
+#avisoOrdem { margin-bottom: 10px; }
+
+/* ============ PARADAS ============ */
+.paradas { display: grid; gap: 10px; }
+
+.parada {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra);
+  padding: 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  scroll-margin: 90px;
+  transition: border-color .2s, box-shadow .2s, opacity .2s;
+}
+.parada.proxima { border: 2px solid var(--verde); }
+.parada.destaque { box-shadow: 0 0 0 4px var(--amarelo); }
+.parada.concluida { opacity: .62; }
+.parada.concluida .parada-num { background: var(--texto-3); }
+
+.parada-num {
+  grid-row: span 2;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--verde);
+  color: #fff;
+  display: grid; place-items: center;
+  font-weight: 800;
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-tema="escuro"] .parada-num { color: #0B1A10; }
+.parada.proxima .parada-num { background: var(--amarelo); color: #3A2A00; }
+
+.parada-corpo { min-width: 0; cursor: pointer; }
+.parada-selos { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.parada-dest {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.parada-end { margin: 4px 0 0; color: var(--texto-2); font-size: 16px; overflow-wrap: anywhere; }
+
+.parada-nfs {
+  grid-column: 1 / -1;
+  min-width: 0;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+.parada-nfs li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 15px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--superficie-2);
+}
+.parada-nfs .nf { font-weight: 700; white-space: nowrap; }
+.parada-nfs .quem { flex: 1; min-width: 0; color: var(--texto-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parada-nfs .kg { white-space: nowrap; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.parada-nfs .ok { color: var(--verde); }
+
+.parada-acoes {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+.parada-acoes .btn { min-height: 50px; font-size: 16px; }
+.parada-acoes .principal { flex: 1 1 0; min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; }
+.ordem-btns { display: flex; gap: 6px; margin-left: auto; }
+.ordem-btns .btn { width: 44px; padding: 0; font-size: 17px; }
+
+/* ============ BARRA INFERIOR ============ */
+.barra-inferior {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: var(--superficie);
+  border-top: 1px solid var(--borda);
+  box-shadow: 0 -4px 16px rgba(0,0,0,.08);
+}
+.barra-inferior .btn {
+  min-height: 56px;
+  padding: 6px 6px;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 20px;
+  line-height: 1;
+  overflow: hidden;
+}
+.barra-inferior .btn span {
+  font-size: 13px;
+  font-weight: 700;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-carregar { background: var(--amarelo); color: #3A2A00; }
+.btn-carregar:hover:not(:disabled) { filter: brightness(.95); }
+
+/* ============ QR CODE DO CARREGAMENTO ============ */
+.modal-qr { max-width: 440px; }
+.qr-corpo { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.qr-corpo .girando { margin: 30px auto; }
+.qr-imagem {
+  width: min(78vw, 320px);
+  height: auto;
+  image-rendering: pixelated;
+  background: #fff;
+  border-radius: var(--raio-sm);
+  padding: 6px;
+  border: 1px solid var(--borda);
+}
+.qr-instrucao { margin: 0; color: var(--texto-2); font-size: 15px; }
+.qr-status { width: 100%; display: grid; gap: 8px; }
+.qr-status .resumo-linha { margin: 0; }
+.qr-acoes { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+
+/* Avisos rápidos acima da barra inferior */
+.toasts { bottom: calc(84px + env(safe-area-inset-bottom)); }
+#btnSalvar.pendente { animation: chamar 1.6s ease-in-out 3; }
+@keyframes chamar { 50% { box-shadow: 0 0 0 6px var(--amarelo); } }
+
+.rodape { padding-bottom: 100px; }
+
+/* Telas muito estreitas */
+@media (max-width: 340px) {
+  .resumo-numeros { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ============ TABLET E COMPUTADOR ============ */
+@media (min-width: 900px) {
+  .resumo { grid-template-columns: 1fr 2fr; align-items: center; padding: 16px 24px; }
+  .layout {
+    flex-direction: row;
+    align-items: flex-start;
+    max-width: 1440px;
+    margin: 0 auto;
+    gap: 20px;
+    padding: 20px 24px 0;
+  }
+  .coluna-mapa {
+    flex: 1.1;
+    position: sticky;
+    top: 16px;
+    border-radius: var(--raio);
+    overflow: hidden;
+    border: 1px solid var(--borda);
+    box-shadow: var(--sombra);
+  }
+  .mapa-caixa, .mapa-caixa.compacto { height: calc(100dvh - 260px); min-height: 420px; }
+  .mapa-tamanho { display: none; }
+  .legenda { border-bottom: 0; border-top: 1px solid var(--borda); }
+  .coluna-lista { flex: 1; padding: 0 0 110px; }
+  .toasts { bottom: 110px; }
+  .barra-inferior {
+    left: auto;
+    right: 24px;
+    bottom: 20px;
+    width: 680px;
+    border-radius: var(--raio);
+    border: 1px solid var(--borda);
+    box-shadow: var(--sombra-forte);
+    padding: 10px;
+  }
+  .barra-inferior .btn { flex-direction: row; gap: 8px; font-size: 18px; }
+  .barra-inferior .btn span { font-size: 15px; }
+}
+</style>

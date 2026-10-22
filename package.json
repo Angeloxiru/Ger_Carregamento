@@ -1,0 +1,14 @@
+{
+  "name": "ger-carregamento",
+  "private": true,
+  "description": "Rota Gaúcha 4.0 - testes locais (o sistema roda no Google Apps Script)",
+  "scripts": {
+    "schema": "node tools/gerar-schema.js",
+    "test": "node --no-warnings testes/executar.js",
+    "test:telas": "node --no-warnings testes/navegador.js"
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "0.8.10",
+    "jsqr": "1.4.0"
+  }
+}

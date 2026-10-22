@@ -1,0 +1,729 @@
+<script>
+/**
+ * Tela do coletor - Rota Gaúcha 4.0
+ *
+ * - Cada leitura é conferida na hora, aqui no coletor, com a mesma regra do
+ *   servidor (REGRA_avaliarLeitura_, embutida pela página).
+ * - As leituras entram numa fila guardada no aparelho e vão ao servidor em
+ *   lotes. Se a internet cair, nada se perde: a fila é enviada quando voltar.
+ * - O servidor confere de novo e devolve as quantidades oficiais.
+ * - Notas na ordem inversa da rota. Só passa para a próxima nota quando a
+ *   atual estiver completa.
+ */
+
+// ============================================
+// ESTADO
+// ============================================
+var Est = {
+  carga: '',
+  token: '',
+  notas: [],            // ordem de carregamento: [{id, numero, destinatario, cidade, uf, ordemEntrega, itens: [...]}]
+  porNota: {},          // id → nota
+  lidasServidor: {},    // itemId → quantidade confirmada pelo servidor
+  fila: [],             // leituras ainda não confirmadas pelo servidor
+  historico: [],        // leituras aceitas deste aparelho (para desfazer): [{id, notaId, rotulo}]
+  notaAtualId: null,
+  status: 'NAO_INICIADO',
+  enviando: false,
+  falhas: 0,
+  teclado: false,
+  dispositivo: '',
+  inicio: null
+};
+
+var LOTE_MAXIMO = 100;
+
+function chave(nome) { return 'rg_' + nome + '_' + Est.carga; }
+
+function guardar() {
+  try {
+    localStorage.setItem(chave('fila'), JSON.stringify(Est.fila));
+    localStorage.setItem(chave('hist'), JSON.stringify(Est.historico.slice(-60)));
+  } catch (e) {}
+}
+
+function restaurar() {
+  try {
+    Est.fila = JSON.parse(localStorage.getItem(chave('fila')) || '[]');
+    Est.historico = JSON.parse(localStorage.getItem(chave('hist')) || '[]');
+  } catch (e) {
+    Est.fila = [];
+    Est.historico = [];
+  }
+}
+
+function idDispositivo() {
+  var id = '';
+  try { id = localStorage.getItem('rg_dispositivo') || ''; } catch (e) {}
+  if (!id) {
+    id = 'COLETOR-' + Math.random().toString(16).slice(2, 6).toUpperCase();
+    try { localStorage.setItem('rg_dispositivo', id); } catch (e) {}
+  }
+  return id;
+}
+
+function novoId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(16) + '-' + Math.random().toString(16).slice(2, 10) + '-' + Math.random().toString(16).slice(2, 10);
+}
+
+function agoraIso() { return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'); }
+
+function numeroQtd(valor) {
+  var v = REGRA_arred_(String(valor || '').replace(',', '.'));
+  return v > 0 ? v : 0;
+}
+
+function fmtQtd(v) {
+  return Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+}
+
+// ============================================
+// QUANTIDADES
+// ============================================
+
+/**
+ * Quantidade de cada item = confirmada pelo servidor + leituras da fila
+ * (a fila é reconferida na ordem, com a mesma regra)
+ */
+function recalcular() {
+  Est.notas.forEach(function(n) {
+    n.itens.forEach(function(it) { it.lida = Est.lidasServidor[it.id] || 0; });
+  });
+  Est.fila.forEach(function(l) {
+    var nota = Est.porNota[l.notaId];
+    if (!nota) return;
+    var av = REGRA_avaliarLeitura_(nota, l);
+    if (av.resultado === 'ACEITA') REGRA_aplicar_(nota, av.alocacoes);
+  });
+}
+
+function primeiraIncompleta() {
+  for (var i = 0; i < Est.notas.length; i++) {
+    if (!REGRA_notaCompleta_(Est.notas[i])) return Est.notas[i];
+  }
+  return null;
+}
+
+function notaAtual() {
+  return Est.porNota[Est.notaAtualId] || primeiraIncompleta() || Est.notas[Est.notas.length - 1];
+}
+
+function todasCompletas() {
+  return Est.notas.every(REGRA_notaCompleta_);
+}
+
+/** Procura o código nas outras notas (para avisar "este item é da NF tal") */
+function notaDoCodigo(codigo, exceto) {
+  var cod = normalizarCodigoBarras_(codigo);
+  if (!cod) return null;
+  for (var i = 0; i < Est.notas.length; i++) {
+    var n = Est.notas[i];
+    if (n.id === exceto) continue;
+    for (var j = 0; j < n.itens.length; j++) {
+      if (n.itens[j].codigoBarras === cod) return n;
+    }
+  }
+  return null;
+}
+
+// ============================================
+// SOM E VIBRAÇÃO
+// ============================================
+var Som = {
+  ctx: null,
+  tocar: function(notas) {
+    try {
+      if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var ctx = this.ctx;
+      var t = ctx.currentTime;
+      notas.forEach(function(n) {
+        var osc = ctx.createOscillator();
+        var vol = ctx.createGain();
+        osc.type = n.tipo || 'square';
+        osc.frequency.value = n.freq;
+        vol.gain.setValueAtTime(0.18, t + n.inicio);
+        vol.gain.exponentialRampToValueAtTime(0.001, t + n.inicio + n.dur);
+        osc.connect(vol);
+        vol.connect(ctx.destination);
+        osc.start(t + n.inicio);
+        osc.stop(t + n.inicio + n.dur);
+      });
+    } catch (e) {}
+  },
+  ok: function() {
+    this.tocar([{ freq: 1760, inicio: 0, dur: 0.08 }]);
+    if (navigator.vibrate) navigator.vibrate(25);
+  },
+  erro: function() {
+    this.tocar([{ freq: 220, inicio: 0, dur: 0.22, tipo: 'sawtooth' }, { freq: 180, inicio: 0.26, dur: 0.3, tipo: 'sawtooth' }]);
+    if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+  },
+  completa: function() {
+    this.tocar([{ freq: 1047, inicio: 0, dur: 0.12 }, { freq: 1319, inicio: 0.13, dur: 0.12 }, { freq: 1568, inicio: 0.26, dur: 0.2 }]);
+    if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
+  }
+};
+
+// ============================================
+// ABERTURA
+// ============================================
+function mostrarEstado(icone, titulo, texto, botao) {
+  var tela = document.getElementById('telaEstado');
+  tela.classList.remove('oculto');
+  document.getElementById('app').classList.add('oculto');
+  tela.innerHTML =
+    (icone ? '<div class="icone">' + icone + '</div>' : '<div class="girando"></div>') +
+    (titulo ? '<h2>' + Util.esc(titulo) + '</h2>' : '') +
+    '<p>' + Util.esc(texto) + '</p>' +
+    (botao ? '<button class="btn btn-primario" onclick="' + botao.acao + '">' + Util.esc(botao.rotulo) + '</button>' : '');
+}
+
+function carregar() {
+  var p = window.PARAMS || {};
+  Est.carga = String(p.carga || '').trim().toUpperCase();
+  Est.token = String(p.token || '').trim();
+  Est.dispositivo = idDispositivo();
+
+  if (!Est.carga || !Est.token) {
+    mostrarEstado('📷', 'Leia o QR code do motorista',
+      'Esta tela abre pelo QR code que aparece no celular do motorista, no botão Carregar.');
+    return;
+  }
+
+  document.getElementById('subtitulo').textContent = 'Carga ' + Est.carga;
+  mostrarEstado(null, null, 'Abrindo o carregamento da carga ' + Est.carga + '…');
+
+  Util.servidor('CARREG_abrir', Est.carga, Est.token)
+    .then(function(r) {
+      if (!r.sucesso) {
+        mostrarEstado('🔒', 'Não foi possível abrir', r.erro);
+        return;
+      }
+      iniciar(r);
+    })
+    .catch(function(e) {
+      mostrarEstado('📶', 'Sem conexão com o servidor', e.message, { rotulo: 'Tentar de novo', acao: 'carregar()' });
+    });
+}
+
+function iniciar(dados) {
+  if (dados.transportadora) {
+    document.getElementById('subtitulo').textContent = 'Carga ' + Est.carga + ' · ' + dados.transportadora;
+  }
+  Est.notas = dados.notas;
+  Est.porNota = {};
+  Est.lidasServidor = {};
+  Est.notas.forEach(function(n) {
+    Est.porNota[n.id] = n;
+    n.itens.forEach(function(it) { Est.lidasServidor[it.id] = it.lida; });
+  });
+  Est.status = dados.status;
+  restaurar();
+  recalcular();
+
+  var atual = primeiraIncompleta();
+  Est.notaAtualId = atual ? atual.id : null;
+
+  document.getElementById('telaEstado').classList.add('oculto');
+
+  if (!atual && Est.fila.length === 0 && Est.status === 'FINALIZADO') {
+    Tela.fim();
+    return;
+  }
+
+  document.getElementById('app').classList.remove('oculto');
+  Tela.renderizar();
+  if (Est.fila.length) {
+    Tela.retorno('Enviando ' + Est.fila.length + ' leitura(s) que ficaram no aparelho…');
+    Envio.enviar().catch(function() {});
+  }
+  Tela.focar();
+  manterTelaLigada();
+  setInterval(Envio.consultar, 15000);
+}
+
+/** Pede ao aparelho para não apagar a tela durante o carregamento */
+function manterTelaLigada() {
+  try {
+    if (navigator.wakeLock) {
+      navigator.wakeLock.request('screen').catch(function() {});
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') navigator.wakeLock.request('screen').catch(function() {});
+      });
+    }
+  } catch (e) {}
+}
+
+// ============================================
+// LEITURA
+// ============================================
+var Leitura = {
+
+  /**
+   * Processa um código lido (ou a confirmação de um item sem código)
+   * @param {String} codigo
+   * @param {String} tipo - CODIGO_BARRAS | DIGITADO | CONFIRMACAO
+   * @param {Number} [itemId] - só para CONFIRMACAO
+   */
+  processar: function(codigo, tipo, itemId) {
+    if (!Est.notas.length) return;
+
+    // Nota completa na tela: a próxima leitura já vale para a próxima nota
+    var nota = notaAtual();
+    if (REGRA_notaCompleta_(nota) && primeiraIncompleta()) {
+      Tela.avancar(true);
+      nota = notaAtual();
+    }
+    if (REGRA_notaCompleta_(nota)) {
+      Tela.retorno('Todas as notas já estão completas.', 'erro');
+      Som.erro();
+      return;
+    }
+
+    var campoQtd = document.getElementById('qtd');
+    var digitada = numeroQtd(campoQtd.value);
+    if (campoQtd.value.trim() && !digitada) {
+      Tela.retorno('Quantidade inválida: ' + campoQtd.value, 'erro');
+      Som.erro();
+      return;
+    }
+
+    var leitura = {
+      id: novoId(),
+      notaId: nota.id,
+      codigo: String(codigo || '').trim(),
+      quantidade: digitada || 1,
+      tipo: tipo,
+      itemId: itemId || null,
+      lidoEm: agoraIso(),
+      dispositivo: Est.dispositivo
+    };
+
+    var av = REGRA_avaliarLeitura_(nota, leitura);
+    leitura.local = av.resultado;
+    Est.fila.push(leitura);
+    guardar();
+
+    if (av.resultado === 'ACEITA') {
+      REGRA_aplicar_(nota, av.alocacoes);
+      var item = nota.itens.filter(function(it) { return it.id === av.alocacoes[0].itemId; })[0];
+      Est.historico.push({ id: leitura.id, notaId: nota.id, rotulo: fmtQtd(leitura.quantidade) + ' × ' + item.descricao });
+      guardar();
+      campoQtd.value = '';
+      Tela.renderizar(item.id);
+      if (REGRA_notaCompleta_(nota)) {
+        Som.completa();
+        Tela.retorno('✓ NF ' + nota.numero + ' completa!', 'ok');
+      } else {
+        Som.ok();
+        Tela.retorno('✓ +' + fmtQtd(leitura.quantidade) + ' ' + item.descricao + ' (' + fmtQtd(item.lida) + '/' + fmtQtd(item.esperada) + ')', 'ok');
+      }
+    } else {
+      Som.erro();
+      Tela.retorno(this.mensagemErro(av, leitura, nota), 'erro');
+    }
+
+    Envio.agendar();
+  },
+
+  mensagemErro: function(av, leitura, nota) {
+    if (av.resultado === 'EXCEDENTE') {
+      return '✗ Passou da quantidade. Falta ' + fmtQtd(av.pendente) + ' deste item' +
+             (leitura.quantidade > 1 ? ' (você informou ' + fmtQtd(leitura.quantidade) + ')' : '') + '.';
+    }
+    if (av.resultado === 'NOTA_FINALIZADA') return '✗ Esta nota já está completa.';
+    if (leitura.tipo === 'CONFIRMACAO') return '✗ Este item precisa ser lido pelo código de barras.';
+    var outra = notaDoCodigo(leitura.codigo, nota.id);
+    if (outra) {
+      return '✗ Este produto é da NF ' + outra.numero + ' (' + outra.destinatario + '), não desta nota.';
+    }
+    return '✗ Código ' + leitura.codigo + ' não está nesta nota.';
+  },
+
+  confirmar: function(itemId) {
+    this.processar('', 'CONFIRMACAO', itemId);
+    Tela.focar();
+  },
+
+  desfazer: function() {
+    var ultimo = Est.historico[Est.historico.length - 1];
+    if (!ultimo) { Util.toast('Nada para desfazer'); return; }
+    var nota = Est.porNota[ultimo.notaId];
+    if (!confirm('Desfazer a última leitura?\n\n' + ultimo.rotulo + (nota ? '\nNF ' + nota.numero : ''))) { Tela.focar(); return; }
+
+    Est.historico.pop();
+    var naFila = Est.fila.filter(function(l) { return l.id === ultimo.id; })[0];
+
+    // Ainda não foi ao servidor: basta tirar da fila
+    if (naFila && !Est.enviando) {
+      Est.fila = Est.fila.filter(function(l) { return l.id !== ultimo.id; });
+      guardar();
+      Leitura.depoisDeDesfazer(ultimo);
+      return;
+    }
+
+    var btn = document.getElementById('btnDesfazer');
+    btn.disabled = true;
+    // Garante que a leitura chegou ao servidor antes de estornar
+    Envio.enviar().then(function() {
+      return Util.servidor('CARREG_desfazer', Est.carga, Est.token, ultimo.id);
+    }).then(function(r) {
+      if (r.lidas) Est.lidasServidor = r.lidas;
+      if (r.status) Est.status = r.status;
+      if (!r.sucesso) throw new Error(r.erro);
+      guardar();
+      Leitura.depoisDeDesfazer(ultimo);
+    }).catch(function(e) {
+      Est.historico.push(ultimo);
+      guardar();
+      Util.toast('Não foi possível desfazer: ' + e.message, { erro: true });
+    }).then(function() {
+      btn.disabled = false;
+      Tela.focar();
+    });
+  },
+
+  depoisDeDesfazer: function(ultimo) {
+    recalcular();
+    var nota = Est.porNota[ultimo.notaId];
+    if (nota && !REGRA_notaCompleta_(nota)) Est.notaAtualId = nota.id;
+    document.getElementById('app').classList.remove('oculto');
+    document.getElementById('telaFim').classList.add('oculto');
+    Tela.renderizar();
+    Tela.retorno('↶ Leitura desfeita: ' + ultimo.rotulo);
+    Tela.focar();
+  }
+};
+
+// ============================================
+// ENVIO AO SERVIDOR
+// ============================================
+var Envio = {
+  timer: null,
+  promessa: null,
+
+  agendar: function() {
+    Tela.sinc();
+    // Junta as leituras de até 0,6 s no mesmo lote, sem adiar o envio
+    // quando o conferente bipa sem parar
+    if (this.timer) return;
+    this.timer = setTimeout(function() {
+      Envio.timer = null;
+      Envio.enviar().catch(function() {});
+    }, 600);
+  },
+
+  /** Envia a fila em lotes. Devolve uma Promise que termina quando a fila esvazia (ou falha). */
+  enviar: function() {
+    if (this.promessa) return this.promessa;
+    if (Est.fila.length === 0) return Promise.resolve();
+
+    var self = this;
+    Est.enviando = true;
+    Tela.sinc();
+    var lote = Est.fila.slice(0, LOTE_MAXIMO);
+    var envio = lote.map(function(l) {
+      return { id: l.id, notaId: l.notaId, codigo: l.codigo, quantidade: l.quantidade, tipo: l.tipo, itemId: l.itemId, lidoEm: l.lidoEm, dispositivo: l.dispositivo };
+    });
+
+    this.promessa = Util.servidor('CARREG_registrar', Est.carga, Est.token, envio)
+      .then(function(r) {
+        if (!r.sucesso) throw new Error(r.erro);
+        self.processarResposta(lote, r);
+        Est.falhas = 0;
+      })
+      .then(function() {
+        self.promessa = null;
+        Est.enviando = false;
+        Tela.sinc();
+        if (Est.fila.length) return self.enviar();
+        Tela.verificarFim();
+      }, function(e) {
+        self.promessa = null;
+        Est.enviando = false;
+        Est.falhas++;
+        Tela.sinc(e.message);
+        var espera = Math.min(30000, 2000 * Est.falhas);
+        clearTimeout(self.timer);
+        self.timer = setTimeout(function() {
+          self.timer = null;
+          self.enviar().catch(function() {});
+        }, espera);
+        throw e;
+      });
+    return this.promessa;
+  },
+
+  processarResposta: function(lote, r) {
+    var enviados = {};
+    lote.forEach(function(l) { enviados[l.id] = l; });
+
+    // O servidor recusou algo que o coletor aceitou (ex: outro coletor leu antes)
+    r.resultados.forEach(function(res) {
+      var l = enviados[res.id];
+      if (l && l.local === 'ACEITA' && res.resultado !== 'ACEITA' && !res.repetida) {
+        Est.historico = Est.historico.filter(function(h) { return h.id !== res.id; });
+        Util.toast('O servidor recusou uma leitura (' + res.resultado.replace('_', ' ').toLowerCase() + '). Confira a quantidade.', { erro: true, duracao: 6000 });
+        Som.erro();
+      }
+    });
+
+    Est.fila = Est.fila.filter(function(l) { return !enviados[l.id]; });
+    Est.lidasServidor = r.lidas;
+    Est.status = r.status;
+    guardar();
+
+    var antes = Est.notaAtualId;
+    recalcular();
+    var nota = Est.porNota[antes];
+    // Se a nota atual perdeu quantidade, ela continua sendo a atual
+    if (nota && !REGRA_notaCompleta_(nota)) Est.notaAtualId = nota.id;
+    Tela.renderizar();
+  },
+
+  /** Busca quantidades do servidor (leituras de outro coletor, painel reiniciou etc.) */
+  consultar: function() {
+    if (Est.enviando || Est.fila.length || document.hidden) return;
+    Util.servidor('CARREG_estado', Est.carga, Est.token).then(function(r) {
+      if (!r.sucesso || Est.enviando || Est.fila.length) return;
+      Est.lidasServidor = r.lidas;
+      Est.status = r.status;
+      recalcular();
+      Tela.renderizar();
+      Tela.verificarFim();
+    }).catch(function() {});
+  }
+};
+
+// ============================================
+// TELA
+// ============================================
+var Tela = {
+
+  renderizar: function(itemDestaque) {
+    var nota = notaAtual();
+    if (!nota) return;
+    var pos = Est.notas.indexOf(nota);
+
+    // Progresso geral
+    var esperado = 0, lido = 0, completas = 0;
+    Est.notas.forEach(function(n) {
+      if (REGRA_notaCompleta_(n)) completas++;
+      n.itens.forEach(function(it) { esperado += it.esperada; lido += Math.min(it.lida, it.esperada); });
+    });
+    var pct = esperado ? Math.round(lido / esperado * 100) : 0;
+    document.getElementById('geralNotas').textContent = 'Nota ' + (pos + 1) + ' de ' + Est.notas.length;
+    document.getElementById('geralQtd').textContent = completas + ' nota(s) prontas · ' + pct + '%';
+    document.getElementById('geralBarra').style.width = pct + '%';
+
+    // Nota atual
+    var itensOk = nota.itens.filter(function(it) { return REGRA_pendente_(it) <= REGRA_EPS; }).length;
+    document.getElementById('notaOrdem').textContent =
+      (pos + 1) + 'ª a carregar · ' + (nota.ordemEntrega ? nota.ordemEntrega + 'ª entrega da rota' : 'sem ordem');
+    document.getElementById('notaNumero').textContent = 'NF ' + nota.numero;
+    document.getElementById('notaItens').textContent = itensOk + '/' + nota.itens.length + ' itens';
+    document.getElementById('notaCliente').textContent = nota.destinatario;
+    document.getElementById('notaCidade').textContent = nota.cidade + (nota.uf ? ' - ' + nota.uf : '');
+
+    var completa = REGRA_notaCompleta_(nota);
+    var haProxima = !!primeiraIncompleta();
+    document.getElementById('notaCompleta').classList.toggle('oculto', !(completa && haProxima));
+
+    // Itens: pendentes primeiro, completos no fim
+    var pendentes = nota.itens.filter(function(it) { return REGRA_pendente_(it) > REGRA_EPS; });
+    var feitos = nota.itens.filter(function(it) { return REGRA_pendente_(it) <= REGRA_EPS; });
+    document.getElementById('itens').innerHTML = pendentes.concat(feitos).map(function(it) {
+      var ok = REGRA_pendente_(it) <= REGRA_EPS;
+      var pctItem = it.esperada ? Math.min(100, Math.round(it.lida / it.esperada * 100)) : 100;
+      var classes = 'item' + (ok ? ' completo' : (it.lida > 0 ? ' parcial' : '')) + (it.codigoBarras ? '' : ' sem-codigo');
+      var codigo = it.codigoBarras ? 'EAN ' + it.codigoBarras : 'SEM CÓDIGO DE BARRAS';
+      var botao = !it.codigoBarras && !ok
+        ? '<button type="button" class="btn btn-azul btn-sm" onclick="Leitura.confirmar(' + it.id + ')">✓ Confirmar ' +
+          (numeroQtd(document.getElementById('qtd').value) ? fmtQtd(numeroQtd(document.getElementById('qtd').value)) : '1') + '</button>'
+        : '';
+      return '<li class="' + classes + '" data-item="' + it.id + '">' +
+        '<div class="item-desc">' + Util.esc(it.descricao) + '<small>Cód ' + Util.esc(it.codigoProduto) + ' · ' + Util.esc(codigo) + '</small></div>' +
+        '<div class="item-qtd"><strong>' + fmtQtd(it.lida) + '</strong> / ' + fmtQtd(it.esperada) + ' <small>' + Util.esc(it.unidade) + '</small></div>' +
+        '<div class="progresso"><span style="width:' + pctItem + '%"></span></div>' +
+        botao +
+      '</li>';
+    }).join('');
+
+    if (itemDestaque) {
+      var el = document.querySelector('[data-item="' + itemDestaque + '"]');
+      if (el) {
+        el.classList.add('piscar');
+        if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+      }
+    }
+    this.sinc();
+  },
+
+  retorno: function(texto, tipo) {
+    var el = document.getElementById('retorno');
+    el.className = 'retorno';
+    void el.offsetWidth; // reinicia a animação
+    if (tipo) el.classList.add(tipo);
+    el.textContent = texto;
+  },
+
+  sinc: function(erro) {
+    var el = document.getElementById('sinc');
+    var txt = document.getElementById('sincTexto');
+    var n = Est.fila.length;
+    if (erro || Est.falhas > 0) {
+      el.className = 'sinc sinc-erro';
+      txt.textContent = n + ' sem enviar';
+      el.title = 'Sem conexão. As leituras estão guardadas no aparelho e serão enviadas sozinhas. ' + (erro || '');
+    } else if (n > 0 || Est.enviando) {
+      el.className = 'sinc sinc-enviando';
+      txt.textContent = 'Enviando ' + n;
+      el.title = 'Enviando leituras';
+    } else {
+      el.className = 'sinc sinc-ok';
+      txt.textContent = 'Em dia';
+      el.title = 'Todas as leituras foram gravadas';
+    }
+  },
+
+  avancar: function(silencioso) {
+    var proxima = primeiraIncompleta();
+    if (!proxima) { this.verificarFim(); return; }
+    Est.notaAtualId = proxima.id;
+    this.renderizar();
+    if (!silencioso) this.retorno('Leia o primeiro item da NF ' + proxima.numero + '.');
+    window.scrollTo(0, 0);
+    this.focar();
+  },
+
+  /** Fim: todas as notas completas e todas as leituras gravadas no servidor */
+  verificarFim: function() {
+    if (!todasCompletas()) return;
+    if (Est.fila.length || Est.enviando) {
+      this.retorno('✓ Tudo conferido. Gravando as últimas leituras…', 'ok');
+      return;
+    }
+    if (Est.status === 'FINALIZADO') this.fim();
+  },
+
+  fim: function() {
+    var volumes = 0;
+    Est.notas.forEach(function(n) { n.itens.forEach(function(it) { volumes += it.esperada; }); });
+    document.getElementById('fimResumo').textContent =
+      'Carga ' + Est.carga + ': ' + Est.notas.length + ' nota(s) e ' + fmtQtd(volumes) +
+      ' unidade(s) conferidas. O motorista já pode sair para a rota.';
+    document.getElementById('app').classList.add('oculto');
+    document.getElementById('telaEstado').classList.add('oculto');
+    document.getElementById('telaFim').classList.remove('oculto');
+    Som.completa();
+  },
+
+  verNotas: function() {
+    var atual = notaAtual();
+    document.getElementById('listaNotas').innerHTML = Est.notas.map(function(n, i) {
+      var feita = REGRA_notaCompleta_(n);
+      var ok = n.itens.filter(function(it) { return REGRA_pendente_(it) <= REGRA_EPS; }).length;
+      var classe = feita ? 'feita' : (n === atual ? 'atual' : '');
+      var selo = feita ? '<span class="selo selo-verde">✓ Pronta</span>'
+        : (n === atual ? '<span class="selo selo-amarelo">Atual</span>' : '<span class="selo">' + ok + '/' + n.itens.length + '</span>');
+      return '<li class="' + classe + '"><span class="pos">' + (i + 1) + '</span>' +
+        '<div><strong>NF ' + Util.esc(n.numero) + '</strong><div class="quem">' + Util.esc(n.destinatario) + ' · ' + Util.esc(n.cidade) + '</div></div>' +
+        selo + '</li>';
+    }).join('');
+    document.getElementById('modalNotas').classList.add('aberto');
+  },
+
+  fecharNotas: function() {
+    document.getElementById('modalNotas').classList.remove('aberto');
+    this.focar();
+  },
+
+  /** Mantém o cursor no campo do código (o leitor "digita" nele) */
+  focar: function() {
+    var ativo = document.activeElement;
+    if (ativo && ativo.id === 'qtd') return;
+    if (document.getElementById('modalNotas').classList.contains('aberto')) return;
+    if (document.getElementById('app').classList.contains('oculto')) return;
+    var campo = document.getElementById('codigo');
+    try { campo.focus({ preventScroll: true }); } catch (e) { campo.focus(); }
+  },
+
+  alternarTeclado: function() {
+    Est.teclado = !Est.teclado;
+    var campo = document.getElementById('codigo');
+    var btn = document.getElementById('btnTeclado');
+    campo.setAttribute('inputmode', Est.teclado ? 'numeric' : 'none');
+    btn.setAttribute('aria-pressed', Est.teclado ? 'true' : 'false');
+    campo.blur();
+    setTimeout(function() { campo.focus(); }, 50);
+  }
+};
+
+// ============================================
+// EVENTOS
+// ============================================
+(function() {
+  var campo = document.getElementById('codigo');
+  var campoQtd = document.getElementById('qtd');
+
+  function enviarCampo() {
+    var codigo = campo.value.trim();
+    campo.value = '';
+    if (!codigo) {
+      // Enter vazio com a nota completa = próxima nota
+      if (!document.getElementById('notaCompleta').classList.contains('oculto')) Tela.avancar();
+      return;
+    }
+    Leitura.processar(codigo, Est.teclado ? 'DIGITADO' : 'CODIGO_BARRAS');
+  }
+
+  // Leitores de código mandam Enter (ou Tab) depois do código
+  campo.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === 'Tab' || e.keyCode === 13) {
+      e.preventDefault();
+      enviarCampo();
+    }
+  });
+
+  campoQtd.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.keyCode === 13) {
+      e.preventDefault();
+      campo.focus();
+    }
+  });
+  campoQtd.addEventListener('input', function() {
+    campoQtd.value = campoQtd.value.replace(/[^\d.,]/g, '');
+    Tela.renderizar(); // atualiza o texto dos botões "Confirmar"
+  });
+  campoQtd.addEventListener('blur', function() { setTimeout(Tela.focar.bind(Tela), 200); });
+
+  // Se o foco sair do campo (toque na tela), volta para ele
+  campo.addEventListener('blur', function() {
+    setTimeout(function() {
+      var a = document.activeElement;
+      if (!a || a === document.body) Tela.focar();
+    }, 250);
+  });
+
+  document.getElementById('btnTeclado').addEventListener('click', function() { Tela.alternarTeclado(); });
+  document.getElementById('btnProxima').addEventListener('click', function() { Tela.avancar(); });
+  document.getElementById('btnDesfazer').addEventListener('click', function() { Leitura.desfazer(); });
+  document.getElementById('btnNotas').addEventListener('click', function() { Tela.verNotas(); });
+  document.getElementById('modalNotas').addEventListener('click', function(e) { if (e.target === this) Tela.fecharNotas(); });
+  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') Tela.fecharNotas(); });
+
+  window.addEventListener('online', function() { Envio.enviar().catch(function() {}); });
+
+  // Aviso ao fechar a tela com leituras ainda não enviadas
+  window.addEventListener('beforeunload', function(e) {
+    if (Est.fila.length) { e.preventDefault(); e.returnValue = ''; }
+  });
+})();
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', carregar);
+} else {
+  carregar();
+}
+</script>

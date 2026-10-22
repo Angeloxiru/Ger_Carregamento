@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Controle - Rota Gaúcha</title>
+  <?!= include('Base-css'); ?>
+  <style>
+    .pagina { max-width: 1280px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+
+    .barra-acoes { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .barra-acoes .busca { flex: 1 1 220px; max-width: 320px; }
+    .barra-acoes .busca input { width: 100%; }
+    .barra-acoes .espaco { flex: 1; }
+
+    .secao-titulo { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 18px; }
+    .secao-titulo span { color: var(--texto-3); font-size: 14px; font-weight: 500; }
+
+    /* Lista de cargas */
+    .cargas { display: grid; gap: 10px; }
+    .carga {
+      display: grid;
+      grid-template-columns: minmax(150px, 1.1fr) minmax(170px, 1.4fr) minmax(130px, .9fr) auto;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 16px;
+    }
+    .carga-num { font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+    .carga-transp { font-size: 13px; color: var(--texto-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+    .carga-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .carga-progresso-texto { display: flex; justify-content: space-between; font-size: 13px; color: var(--texto-2); margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+    .carga-acoes { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+
+    /* Upload */
+    .area-upload {
+      border: 2px dashed var(--borda);
+      border-radius: var(--raio);
+      padding: 26px 16px;
+      text-align: center;
+      cursor: pointer;
+      background: var(--superficie-2);
+      transition: border-color .15s, background .15s;
+    }
+    .area-upload:hover, .area-upload.arrastando { border-color: var(--verde); background: var(--verde-claro); }
+    .area-upload .icone { font-size: 34px; }
+    .area-upload p { margin: 6px 0 0; color: var(--texto-2); font-size: 14px; }
+    .lista-arquivos { max-height: 180px; overflow: auto; margin-top: 10px; font-size: 13px; color: var(--texto-2); display: grid; gap: 4px; }
+    .lista-arquivos div { display: flex; justify-content: space-between; gap: 10px; padding: 6px 10px; background: var(--superficie-2); border-radius: 8px; }
+    .form-upload { display: flex; flex-direction: column; gap: 16px; }
+    .modal-botoes { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+
+    .carga-carreg { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--texto-2); }
+    .carga-carreg .progresso { flex: 1; height: 6px; }
+
+    /* Detalhes da carga */
+    .modal-largo { max-width: 860px; }
+    .det-resumo { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+    .det-nota { border: 1px solid var(--borda); border-radius: var(--raio-sm); margin-bottom: 10px; overflow: hidden; }
+    .det-nota > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; background: var(--superficie-2); }
+    .det-nota > summary::-webkit-details-marker { display: none; }
+    .det-nota .ordem { font-weight: 800; color: var(--texto-3); text-align: center; font-size: 13px; }
+    .det-nota .quem { font-size: 13px; color: var(--texto-2); }
+    .det-itens { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .det-itens th, .det-itens td { padding: 7px 10px; border-top: 1px solid var(--borda); text-align: left; }
+    .det-itens th { color: var(--texto-2); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .det-itens td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .det-itens tr.ok td { background: var(--verde-claro); }
+    .det-recusadas { font-size: 13px; }
+    .det-recusadas li { margin-bottom: 4px; }
+    .det-acoes { display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; margin-top: 14px; }
+
+    @media (max-width: 860px) {
+      .carga { grid-template-columns: 1fr 1fr; }
+      .carga-acoes { grid-column: 1 / -1; justify-content: stretch; }
+      .carga-acoes .btn { flex: 1; }
+    }
+    @media (max-width: 520px) {
+      .pagina { padding: 14px; }
+      .carga { grid-template-columns: 1fr; gap: 12px; }
+      .indicador-valor { font-size: 24px; }
+      .topo-conteudo { padding: 12px 14px 16px; }
+      .topo .rotulo-btn { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <?!= include('Login-html'); ?>
+
+  <div id="app" class="oculto">
+    <header class="topo">
+      <div class="topo-conteudo">
+        <div class="marca">
+          <span class="marca-icone">🚚</span>
+          <div>Rota Gaúcha<small>Painel de controle</small></div>
+        </div>
+        <div class="topo-acoes">
+          <button class="btn btn-topo" onclick="irPara('api')" title="Uso de API">📊 <span class="rotulo-btn">Uso de API</span></button>
+          <button class="btn btn-topo btn-icone" onclick="alternarTema()" title="Tema claro/escuro" aria-label="Tema claro ou escuro">◐</button>
+          <button class="btn btn-topo" onclick="Admin.sair()" title="Sair">Sair</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="pagina">
+      <div id="avisos"></div>
+
+      <section class="indicadores" aria-label="Resumo">
+        <div class="cartao indicador">
+          <div class="indicador-rotulo">Cargas</div>
+          <div class="indicador-valor" id="indCargas">–</div>
+          <div class="indicador-detalhe" id="indCargasDet">&nbsp;</div>
+        </div>
+        <div class="cartao indicador">
+          <div class="indicador-rotulo">Entregas concluídas</div>
+          <div class="indicador-valor" id="indEntregas">–</div>
+          <div class="indicador-detalhe" id="indEntregasDet">&nbsp;</div>
+        </div>
+        <div class="cartao indicador">
+          <div class="indicador-rotulo">Carregamentos</div>
+          <div class="indicador-valor" id="indCarreg">–</div>
+          <div class="indicador-detalhe" id="indCarregDet">&nbsp;</div>
+        </div>
+        <div class="cartao indicador">
+          <div class="indicador-rotulo">Peso total</div>
+          <div class="indicador-valor" id="indPeso">–</div>
+          <div class="indicador-detalhe">em todas as cargas</div>
+        </div>
+      </section>
+
+      <section class="barra-acoes">
+        <button class="btn btn-primario" onclick="abrirUpload()">⬆ Enviar XMLs</button>
+        <button class="btn btn-secundario" id="btnSincronizar" onclick="sincronizar()">↻ Sincronizar com o Drive</button>
+        <span class="espaco"></span>
+        <div class="campo busca">
+          <input type="search" id="busca" placeholder="Buscar carga ou transportadora" oninput="renderizar()" aria-label="Buscar">
+        </div>
+      </section>
+
+      <section>
+        <h2 class="secao-titulo">Cargas em rota <span id="contagem"></span></h2>
+        <div id="carregando" class="estado-vazio"><div class="girando" style="margin:0 auto 10px"></div>Carregando cargas…</div>
+        <div id="cargas" class="cargas" style="margin-top:12px"></div>
+        <div id="vazio" class="estado-vazio cartao oculto" style="margin-top:12px">
+          <div class="icone">📦</div>
+          <h3>Nenhuma carga encontrada</h3>
+          <p>Envie os XMLs de uma carga ou sincronize com a pasta "CargasEmRota" do Drive.</p>
+        </div>
+      </section>
+    </main>
+
+    <div class="rodape">Rota Gaúcha 4.0 · Painel de controle · Feito pelo Xiru</div>
+  </div>
+
+  <!-- MODAL DE UPLOAD -->
+  <div id="modalUpload" class="modal" role="dialog" aria-modal="true" aria-labelledby="tituloUpload">
+    <div class="cartao modal-caixa">
+      <h2 class="modal-titulo" id="tituloUpload">Enviar XMLs da carga
+        <button class="btn btn-secundario btn-sm btn-icone" onclick="fecharUpload()" aria-label="Fechar">✕</button>
+      </h2>
+      <form class="form-upload" onsubmit="enviarArquivos(event)">
+        <div class="campo">
+          <label for="numeroCarga">Número da carga</label>
+          <input type="text" id="numeroCarga" placeholder="Ex: C123" autocomplete="off" style="text-transform:uppercase" oninput="validarUpload()" required>
+          <span class="ajuda">C seguido de números. Se a carga já existir, as NFs novas são acrescentadas.</span>
+        </div>
+        <div>
+          <div class="area-upload" id="areaUpload" onclick="document.getElementById('arquivos').click()">
+            <div class="icone">📄</div>
+            <strong>Clique ou arraste os XMLs aqui</strong>
+            <p>Aceita vários arquivos .xml de NF-e</p>
+            <input type="file" id="arquivos" accept=".xml,text/xml" multiple class="oculto" onchange="selecionarArquivos(this.files)">
+          </div>
+          <div id="listaArquivos" class="lista-arquivos"></div>
+        </div>
+        <div id="statusUpload" class="aviso aviso-info oculto"></div>
+        <div class="modal-botoes">
+          <button type="button" class="btn btn-secundario" onclick="fecharUpload()">Cancelar</button>
+          <button type="submit" class="btn btn-primario" id="btnEnviar" disabled>Enviar e processar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL DE DETALHES DA CARGA -->
+  <div id="modalDetalhe" class="modal" role="dialog" aria-modal="true" aria-labelledby="tituloDetalhe">
+    <div class="cartao modal-caixa modal-largo">
+      <h2 class="modal-titulo" id="tituloDetalhe"><span id="detTitulo">Carga</span>
+        <button class="btn btn-secundario btn-sm btn-icone" onclick="fecharDetalhe()" aria-label="Fechar">✕</button>
+      </h2>
+      <div id="detCorpo"></div>
+    </div>
+  </div>
+
+  <?!= include('Comum-js'); ?>
+  <script>
+    var estado = { cargas: [] };
+    var arquivosSelecionados = [];
+
+    function alternarTema() { Util.alternarTema(); }
+
+    function irPara(pagina) {
+      Util.servidor('obterURLPagina', pagina).then(function(url) { window.open(url, '_top'); });
+    }
+
+    // ============ LISTAGEM ============
+
+    function carregar() {
+      document.getElementById('carregando').classList.remove('oculto');
+      return Admin.chamar('PAINEL_listarCargasComLinks')
+        .then(function(r) {
+          document.getElementById('carregando').classList.add('oculto');
+          if (!r.sucesso) { Util.toast('Erro: ' + r.erro, { erro: true }); return; }
+          estado.cargas = r.cargas;
+          mostrarAvisos(r);
+          renderizar();
+        })
+        .catch(function(e) {
+          document.getElementById('carregando').classList.add('oculto');
+          Util.toast('Erro ao carregar: ' + e.message, { erro: true });
+        });
+    }
+
+    function mostrarAvisos(r) {
+      var html = '';
+      if (r.banco && !r.banco.ok) {
+        html += '<div class="aviso aviso-erro" style="margin-bottom:8px">🗄️ <div><strong>' + Util.esc(r.banco.mensagem) + '.</strong> ' +
+                'Na planilha, rode 🚚 Rota Gaúcha › Configurar sistema (URL e token do Turso) ou › Testar e atualizar o banco.</div></div>';
+      }
+      if (!r.mapaConfigurado) {
+        html += '<div class="aviso aviso-info">🗺️ <div>A chave do Google Maps não está configurada: a tela do motorista funciona, mas sem o mapa. ' +
+                'Configure em 🚚 Rota Gaúcha › Configurar sistema.</div></div>';
+      }
+      document.getElementById('avisos').innerHTML = html;
+    }
+
+    function classeStatus(status) {
+      if (status === 'Concluída') return 'selo-verde';
+      if (status === 'Em andamento') return 'selo-amarelo';
+      if (status === 'Erro') return 'selo-vermelho';
+      return 'selo-azul';
+    }
+
+    function renderizar() {
+      var termo = document.getElementById('busca').value.trim().toLowerCase();
+      var cargas = estado.cargas.filter(function(c) {
+        return !termo || c.numero.toLowerCase().indexOf(termo) !== -1 ||
+               String(c.transportadora || '').toLowerCase().indexOf(termo) !== -1;
+      });
+
+      // Indicadores (sempre sobre todas as cargas)
+      var tot = estado.cargas.reduce(function(a, c) {
+        a.entregas += c.totalEntregas; a.concluidas += c.concluidas; a.peso += c.pesoTotal;
+        if (c.status !== 'Concluída') a.ativas++;
+        return a;
+      }, { entregas: 0, concluidas: 0, peso: 0, ativas: 0 });
+      var pct = tot.entregas ? Math.round(tot.concluidas / tot.entregas * 100) : 0;
+
+      document.getElementById('indCargas').textContent = estado.cargas.length;
+      document.getElementById('indCargasDet').textContent = tot.ativas + ' em aberto';
+      document.getElementById('indEntregas').textContent = tot.concluidas + '/' + tot.entregas;
+      document.getElementById('indEntregasDet').textContent = pct + '% concluído';
+      document.getElementById('indPeso').textContent = Util.peso(tot.peso);
+      var finalizados = estado.cargas.filter(function(c) { return c.carregamento.status === 'FINALIZADO'; }).length;
+      var emCarreg = estado.cargas.filter(function(c) { return c.carregamento.status === 'EM_ANDAMENTO'; }).length;
+      document.getElementById('indCarreg').textContent = finalizados + '/' + estado.cargas.length;
+      document.getElementById('indCarregDet').textContent = emCarreg ? emCarreg + ' em andamento' : 'cargas conferidas';
+      document.getElementById('contagem').textContent = cargas.length + (cargas.length === 1 ? ' carga' : ' cargas');
+
+      document.getElementById('vazio').classList.toggle('oculto', cargas.length > 0);
+
+      document.getElementById('cargas').innerHTML = cargas.map(function(c) {
+        var pctCarga = c.totalEntregas ? Math.round(c.concluidas / c.totalEntregas * 100) : 0;
+        var n = Util.esc(c.numero);
+        return '<article class="cartao carga">' +
+          '<div>' +
+            '<div class="carga-num">' + n + '</div>' +
+            '<div class="carga-transp" title="' + Util.esc(c.transportadora) + '">' + (Util.esc(c.transportadora) || '<em>Transportadora não informada</em>') + '</div>' +
+          '</div>' +
+          '<div>' +
+            '<div class="carga-progresso-texto"><span>' + c.concluidas + ' de ' + c.totalEntregas + ' entregas</span><span>' + pctCarga + '%</span></div>' +
+            '<div class="progresso"><span style="width:' + pctCarga + '%"></span></div>' +
+            htmlCarregamento(c) +
+          '</div>' +
+          '<div class="carga-meta">' +
+            '<span class="selo ' + classeStatus(c.status) + '">' + Util.esc(c.status) + '</span>' +
+            (c.erro ? '' : '<span class="selo">' + c.cidades + (c.cidades === 1 ? ' cidade' : ' cidades') + '</span>') +
+            (c.erro ? '' : '<span class="selo">' + Util.peso(c.pesoTotal) + '</span>') +
+            (c.rotaSalva ? '<span class="selo selo-verde" title="O motorista salvou a ordem das entregas">Rota salva</span>'
+                         : '<span class="selo" title="O motorista ainda não salvou a ordem">Rota não salva</span>') +
+          '</div>' +
+          '<div class="carga-acoes">' +
+            (c.erro
+              ? '<span class="selo selo-vermelho" title="' + Util.esc(c.erro) + '">Formato inválido</span>'
+              : '<button class="btn btn-secundario btn-sm" onclick="copiarLink(\'' + n + '\', this)">Copiar link</button>' +
+                '<button class="btn btn-whats btn-sm" onclick="enviarWhats(\'' + n + '\')">WhatsApp</button>' +
+                '<a class="btn btn-secundario btn-sm" href="' + Util.esc(c.link) + '" target="_blank" rel="noopener">Abrir</a>' +
+                '<button class="btn btn-secundario btn-sm" onclick="abrirDetalhe(\'' + n + '\')">Itens</button>') +
+            '<button class="btn btn-perigo btn-sm btn-icone" onclick="excluir(\'' + n + '\', this)" title="Excluir carga" aria-label="Excluir carga ' + n + '">🗑</button>' +
+          '</div>' +
+        '</article>';
+      }).join('');
+    }
+
+    function buscarCarga(numero) {
+      return estado.cargas.filter(function(c) { return c.numero === numero; })[0];
+    }
+
+    function copiarLink(numero, btn) {
+      var c = buscarCarga(numero);
+      Util.copiar(c.link).then(function() {
+        var original = btn.textContent;
+        btn.textContent = '✓ Copiado';
+        setTimeout(function() { btn.textContent = original; }, 1800);
+      }).catch(function() {
+        window.prompt('Copie o link:', c.link);
+      });
+    }
+
+    function enviarWhats(numero) {
+      var c = buscarCarga(numero);
+      var msg = '🚚 *Rota Gaúcha - ' + c.numero + '*\n\n' +
+                'Olá! Segue o link da sua rota de entregas (' + c.totalEntregas + ' entregas):\n\n' + c.link;
+      window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+    }
+
+    function excluir(numero, btn) {
+      var c = buscarCarga(numero);
+      var detalhe = c && c.concluidas < c.totalEntregas
+        ? '\n\n⚠️ Ainda há ' + (c.totalEntregas - c.concluidas) + ' entrega(s) pendente(s).' : '';
+      if (!confirm('Excluir a carga ' + numero + '?\n\nTodos os dados dela serão apagados do banco (notas, itens, leituras do carregamento e acessos) e a pasta do Drive irá para a lixeira.' + detalhe)) return;
+
+      btn.disabled = true;
+      Admin.chamar('PAINEL_excluirCarga', numero).then(function(r) {
+        if (!r.sucesso) { btn.disabled = false; Util.toast(r.erro, { erro: true }); return; }
+        estado.cargas = estado.cargas.filter(function(x) { return x.numero !== numero; });
+        renderizar();
+        Util.toast(r.mensagem);
+      }).catch(function(e) {
+        btn.disabled = false;
+        Util.toast('Erro ao excluir: ' + e.message, { erro: true });
+      });
+    }
+
+    function sincronizar() {
+      var btn = document.getElementById('btnSincronizar');
+      btn.disabled = true;
+      btn.textContent = '↻ Sincronizando…';
+      Admin.chamar('PAINEL_atualizarCargas').then(function(r) {
+        Util.toast(r.sucesso ? '✓ ' + r.mensagem : 'Erro: ' + r.erro, { erro: !r.sucesso, duracao: 6000 });
+        return carregar();
+      }).catch(function(e) {
+        Util.toast('Erro ao sincronizar: ' + e.message, { erro: true });
+      }).then(function() {
+        btn.disabled = false;
+        btn.textContent = '↻ Sincronizar com o Drive';
+      });
+    }
+
+    function htmlCarregamento(c) {
+      if (c.erro) return '';
+      var k = c.carregamento;
+      var pct = k.qtdEsperada ? Math.min(100, Math.round(k.qtdLida / k.qtdEsperada * 100)) : 0;
+      var classe = k.status === 'FINALIZADO' ? 'selo-verde' : (k.status === 'EM_ANDAMENTO' ? 'selo-amarelo' : '');
+      return '<div class="carga-carreg" title="Conferência do carregamento">' +
+        '<span class="selo ' + classe + '">📦 ' + Util.esc(k.descricao) + '</span>' +
+        '<div class="progresso"><span style="width:' + pct + '%"></span></div><span>' + pct + '%</span></div>';
+    }
+
+    // ============ DETALHES DA CARGA ============
+
+    function qtd(v) { return Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 }); }
+
+    function abrirDetalhe(numero) {
+      document.getElementById('detTitulo').textContent = 'Carga ' + numero;
+      document.getElementById('detCorpo').innerHTML = '<div class="estado-vazio"><div class="girando" style="margin:0 auto 10px"></div>Buscando notas e itens…</div>';
+      document.getElementById('modalDetalhe').classList.add('aberto');
+
+      Admin.chamar('PAINEL_detalheCarga', numero).then(function(r) {
+        if (!r.sucesso) throw new Error(r.erro);
+        renderizarDetalhe(r);
+      }).catch(function(e) {
+        document.getElementById('detCorpo').innerHTML = '<div class="aviso aviso-erro">' + Util.esc(e.message) + '</div>';
+      });
+    }
+
+    function renderizarDetalhe(r) {
+      var completas = r.notas.filter(function(n) { return n.completa; }).length;
+      var html = '<div class="det-resumo">' +
+        '<span class="selo">' + Util.esc(r.transportadora || 'Transportadora não informada') + '</span>' +
+        '<span class="selo">' + r.notas.length + ' notas</span>' +
+        '<span class="selo ' + (completas === r.notas.length ? 'selo-verde' : 'selo-amarelo') + '">📦 ' + completas + ' carregada(s)</span>' +
+        '</div>';
+
+      html += r.notas.map(function(n) {
+        var selo = n.completa ? '<span class="selo selo-verde">✓ Carregada</span>'
+          : '<span class="selo">' + qtd(n.qtd_lida) + '/' + qtd(n.qtd_esperada) + '</span>';
+        var entrega = n.status_entrega === 'CONCLUIDA' ? ' · entregue' : '';
+        return '<details class="det-nota"><summary>' +
+            '<span class="ordem">' + (n.ordem_entrega ? n.ordem_entrega + 'ª' : '–') + '</span>' +
+            '<div><strong>NF ' + Util.esc(n.numero) + '</strong><div class="quem">' + Util.esc(n.destinatario) + ' · ' + Util.esc(n.cidade) + entrega + '</div></div>' +
+            selo +
+          '</summary>' +
+          '<table class="det-itens"><thead><tr><th>Item</th><th>Código</th><th>Cód. barras</th><th class="num">Lido</th></tr></thead><tbody>' +
+          n.itens.map(function(it) {
+            return '<tr class="' + (it.completo ? 'ok' : '') + '"><td>' + Util.esc(it.descricao) + '</td>' +
+              '<td>' + Util.esc(it.codigo_produto) + '</td>' +
+              '<td>' + (it.codigo_barras ? Util.esc(it.codigo_barras) : '<em>sem GTIN</em>') + '</td>' +
+              '<td class="num">' + qtd(it.qtd_lida) + ' / ' + qtd(it.qtd_esperada) + ' ' + Util.esc(it.unidade_trib) + '</td></tr>';
+          }).join('') +
+          '</tbody></table></details>';
+      }).join('');
+
+      if (r.recusadas.length) {
+        html += '<h3 style="font-size:15px;margin:16px 0 8px">Leituras recusadas (últimas ' + r.recusadas.length + ')</h3><ul class="det-recusadas">' +
+          r.recusadas.map(function(l) {
+            return '<li>NF ' + Util.esc(l.nota) + ': código <code>' + Util.esc(l.codigo_lido || '–') + '</code> × ' + qtd(l.quantidade) +
+                   ' · ' + Util.esc(l.motivo) + ' · ' + new Date(l.lido_em).toLocaleString('pt-BR') + '</li>';
+          }).join('') + '</ul>';
+      }
+
+      html += '<div class="det-acoes">' +
+        '<button class="btn btn-perigo btn-sm" onclick="reiniciarCarregamento(\'' + Util.esc(r.numero) + '\', this)">↺ Reiniciar carregamento</button>' +
+        '<button class="btn btn-secundario btn-sm" onclick="fecharDetalhe()">Fechar</button></div>';
+
+      document.getElementById('detCorpo').innerHTML = html;
+    }
+
+    function fecharDetalhe() {
+      document.getElementById('modalDetalhe').classList.remove('aberto');
+    }
+
+    function reiniciarCarregamento(numero, btn) {
+      if (!confirm('Reiniciar o carregamento da carga ' + numero + '?\n\nTodas as leituras serão apagadas e a conferência começa do zero. Use quando o caminhão for descarregado.')) return;
+      btn.disabled = true;
+      Admin.chamar('PAINEL_reiniciarCarregamento', numero).then(function(r) {
+        if (!r.sucesso) throw new Error(r.erro);
+        Util.toast(r.mensagem);
+        abrirDetalhe(numero);
+        carregar();
+      }).catch(function(e) {
+        btn.disabled = false;
+        Util.toast('Erro: ' + e.message, { erro: true });
+      });
+    }
+
+    // ============ UPLOAD ============
+
+    function abrirUpload() {
+      arquivosSelecionados = [];
+      document.getElementById('numeroCarga').value = '';
+      document.getElementById('arquivos').value = '';
+      document.getElementById('listaArquivos').innerHTML = '';
+      document.getElementById('statusUpload').classList.add('oculto');
+      validarUpload();
+      document.getElementById('modalUpload').classList.add('aberto');
+      setTimeout(function() { document.getElementById('numeroCarga').focus(); }, 50);
+    }
+
+    function fecharUpload() {
+      document.getElementById('modalUpload').classList.remove('aberto');
+    }
+
+    function selecionarArquivos(lista) {
+      var xmls = Array.prototype.filter.call(lista, function(f) { return /\.xml$/i.test(f.name); });
+      if (xmls.length === 0) { Util.toast('Selecione arquivos .xml', { erro: true }); return; }
+      arquivosSelecionados = xmls;
+      document.getElementById('listaArquivos').innerHTML =
+        '<strong style="color:var(--texto)">' + xmls.length + ' arquivo(s)</strong>' +
+        xmls.map(function(f) {
+          return '<div><span>' + Util.esc(f.name) + '</span><span>' + Util.numero(f.size / 1024, 1) + ' KB</span></div>';
+        }).join('');
+      validarUpload();
+    }
+
+    function validarUpload() {
+      var ok = /^C\d+$/i.test(document.getElementById('numeroCarga').value.trim()) && arquivosSelecionados.length > 0;
+      document.getElementById('btnEnviar').disabled = !ok;
+    }
+
+    function lerBase64(arquivo) {
+      return new Promise(function(resolve, reject) {
+        var leitor = new FileReader();
+        leitor.onload = function() { resolve({ nome: arquivo.name, base64: String(leitor.result).split(',')[1] }); };
+        leitor.onerror = function() { reject(new Error('Não foi possível ler ' + arquivo.name)); };
+        leitor.readAsDataURL(arquivo);
+      });
+    }
+
+    function enviarArquivos(ev) {
+      ev.preventDefault();
+      var numero = document.getElementById('numeroCarga').value.trim().toUpperCase();
+      var btn = document.getElementById('btnEnviar');
+      var status = document.getElementById('statusUpload');
+
+      btn.disabled = true;
+      status.className = 'aviso aviso-info';
+      status.textContent = 'Lendo ' + arquivosSelecionados.length + ' arquivo(s)…';
+
+      Promise.all(arquivosSelecionados.map(lerBase64))
+        .then(function(arquivos) {
+          status.textContent = 'Enviando para o Drive e processando as notas…';
+          return Admin.chamar('PAINEL_uploadXMLs', numero, arquivos);
+        })
+        .then(function(r) {
+          if (!r.sucesso) {
+            status.className = 'aviso aviso-erro';
+            status.innerHTML = Util.esc(r.erro) + (r.ignorados && r.ignorados.length ? '<br>' + r.ignorados.map(Util.esc).join('<br>') : '');
+            btn.disabled = false;
+            return;
+          }
+          fecharUpload();
+          var extra = r.ignorados && r.ignorados.length ? ' (' + r.ignorados.length + ' ignorado(s))' : '';
+          Util.toast('✓ Carga ' + r.numeroCarga + ': ' + r.arquivosProcessados + ' XML(s) processado(s)' + extra, { duracao: 6000 });
+          if (r.ignorados && r.ignorados.length) alert('Arquivos ignorados:\n\n' + r.ignorados.join('\n'));
+          carregar();
+        })
+        .catch(function(e) {
+          status.className = 'aviso aviso-erro';
+          status.textContent = 'Erro no envio: ' + e.message;
+          btn.disabled = false;
+        });
+    }
+
+    // Arrastar e soltar
+    (function() {
+      var area = document.getElementById('areaUpload');
+      ['dragenter', 'dragover'].forEach(function(t) {
+        area.addEventListener(t, function(e) { e.preventDefault(); area.classList.add('arrastando'); });
+      });
+      ['dragleave', 'drop'].forEach(function(t) {
+        area.addEventListener(t, function(e) { e.preventDefault(); area.classList.remove('arrastando'); });
+      });
+      area.addEventListener('drop', function(e) { selecionarArquivos(e.dataTransfer.files); });
+    })();
+
+    // Fechar modal clicando fora ou com Esc
+    document.getElementById('modalUpload').addEventListener('click', function(e) { if (e.target === this) fecharUpload(); });
+    document.getElementById('modalDetalhe').addEventListener('click', function(e) { if (e.target === this) fecharDetalhe(); });
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { fecharUpload(); fecharDetalhe(); } });
+
+    Admin.iniciar(carregar);
+  </script>
+</body>
+</html>

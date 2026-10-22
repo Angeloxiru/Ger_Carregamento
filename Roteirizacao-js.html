@@ -1,0 +1,292 @@
+<script>
+/**
+ * Roteirizador - Otimização de rota sem APIs pagas
+ *
+ * Usa as coordenadas salvas no _GeoCache e calcula a ordem das paradas
+ * em duas etapas:
+ *   1. Ordem das CIDADES (pelo ponto médio das entregas de cada cidade)
+ *   2. Ordem das paradas DENTRO de cada cidade, saindo do ponto atual e
+ *      terminando o mais perto possível da próxima cidade
+ *
+ * Cada etapa usa "vizinho mais próximo" para montar a rota inicial e depois
+ * 2-opt + or-opt para desfazer cruzamentos e idas e vindas.
+ *
+ * Distâncias são em linha reta multiplicadas por um fator de estrada,
+ * então km e tempo são ESTIMATIVAS.
+ */
+var Roteirizador = (function() {
+  var CONFIG = {
+    FATOR_ESTRADA: 1.3,        // linha reta → estrada (média para o RS)
+    VELOCIDADE_URBANA: 25,     // km/h para trechos curtos
+    VELOCIDADE_ESTRADA: 65,    // km/h para trechos longos
+    LIMITE_URBANO_KM: 3,       // até aqui, considera trecho urbano
+    MAX_ITERACOES: 200
+  };
+
+  /** Distância em linha reta (metros) */
+  function linhaReta(a, b) {
+    var R = 6371000;
+    var rad = Math.PI / 180;
+    var dLat = (b.lat - a.lat) * rad;
+    var dLng = (b.lng - a.lng) * rad;
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(a.lat * rad) * Math.cos(b.lat * rad) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  }
+
+  function temCoord(p) {
+    return p && typeof p.lat === 'number' && typeof p.lng === 'number' &&
+           !isNaN(p.lat) && !isNaN(p.lng);
+  }
+
+  /** Estimativa de um trecho: distância de estrada (m) e tempo (s) */
+  function estimarTrecho(a, b) {
+    var metros = linhaReta(a, b) * CONFIG.FATOR_ESTRADA;
+    var km = metros / 1000;
+    var horas = km <= CONFIG.LIMITE_URBANO_KM
+      ? km / CONFIG.VELOCIDADE_URBANA
+      : CONFIG.LIMITE_URBANO_KM / CONFIG.VELOCIDADE_URBANA +
+        (km - CONFIG.LIMITE_URBANO_KM) / CONFIG.VELOCIDADE_ESTRADA;
+    return { distancia: metros, tempo: horas * 3600 };
+  }
+
+  /**
+   * Custo de um caminho [inicio, ...nós, fim?]
+   */
+  function custoCaminho(caminho) {
+    var total = 0;
+    for (var i = 1; i < caminho.length; i++) total += linhaReta(caminho[i - 1], caminho[i]);
+    return total;
+  }
+
+  /**
+   * Vizinho mais próximo a partir de "inicio"
+   * @returns {Array} nós na ordem de visita (sem o início)
+   */
+  function vizinhoMaisProximo(inicio, nos) {
+    var restantes = nos.slice();
+    var rota = [];
+    var atual = inicio;
+    while (restantes.length) {
+      var melhor = 0;
+      var melhorDist = Infinity;
+      for (var i = 0; i < restantes.length; i++) {
+        var d = linhaReta(atual, restantes[i]);
+        if (d < melhorDist) { melhorDist = d; melhor = i; }
+      }
+      atual = restantes.splice(melhor, 1)[0];
+      rota.push(atual);
+    }
+    return rota;
+  }
+
+  /**
+   * Melhora uma rota aberta com 2-opt e or-opt.
+   * O início é fixo; o fim também, se informado.
+   * @param {Object} inicio - {lat, lng}
+   * @param {Array} rota - nós na ordem atual
+   * @param {Object} [fim] - ponto fixo de chegada
+   * @returns {Array} rota melhorada
+   */
+  function melhorar(inicio, rota, fim) {
+    if (rota.length < 2) return rota.slice();
+
+    // caminho = [inicio, ...rota, fim?]; índices 1..n são móveis
+    var caminho = [inicio].concat(rota);
+    if (fim) caminho.push(fim);
+    var n = rota.length;
+    var ultimoMovel = n;              // índice do último nó móvel
+    var EPS = 1e-6;
+
+    function d(i, j) { return linhaReta(caminho[i], caminho[j]); }
+    function existe(i) { return i < caminho.length; }
+
+    var melhorou = true;
+    var iteracoes = 0;
+
+    while (melhorou && iteracoes++ < CONFIG.MAX_ITERACOES) {
+      melhorou = false;
+
+      // 2-opt: inverte o trecho i..j
+      for (var i = 1; i < ultimoMovel; i++) {
+        for (var j = i + 1; j <= ultimoMovel; j++) {
+          var antes = d(i - 1, i) + (existe(j + 1) ? d(j, j + 1) : 0);
+          var depois = d(i - 1, j) + (existe(j + 1) ? d(i, j + 1) : 0);
+          if (depois + EPS < antes) {
+            var trecho = caminho.slice(i, j + 1).reverse();
+            Array.prototype.splice.apply(caminho, [i, trecho.length].concat(trecho));
+            melhorou = true;
+          }
+        }
+      }
+
+      // or-opt: move blocos de 1 a 3 nós para outra posição
+      for (var tam = 1; tam <= 3; tam++) {
+        for (var a = 1; a + tam - 1 <= ultimoMovel; a++) {
+          var b = a + tam - 1;
+          var semBloco = d(a - 1, a) + (existe(b + 1) ? d(b, b + 1) : 0) -
+                         (existe(b + 1) ? d(a - 1, b + 1) : 0);
+
+          var melhorGanho = EPS;
+          var melhorPos = -1;
+          var inverter = false;
+
+          // inserir entre p e p+1 (fora do bloco)
+          for (var p = 0; p <= ultimoMovel; p++) {
+            if (p >= a - 1 && p <= b) continue;
+            var temProx = existe(p + 1);
+            var base = temProx ? d(p, p + 1) : 0;
+            var normal = d(p, a) + (temProx ? d(b, p + 1) : 0) - base;
+            var invertido = d(p, b) + (temProx ? d(a, p + 1) : 0) - base;
+            var custo = Math.min(normal, invertido);
+            var ganho = semBloco - custo;
+            if (ganho > melhorGanho) {
+              melhorGanho = ganho;
+              melhorPos = p;
+              inverter = invertido < normal;
+            }
+          }
+
+          if (melhorPos !== -1) {
+            var bloco = caminho.splice(a, tam);
+            if (inverter) bloco.reverse();
+            var destino = melhorPos > b ? melhorPos - tam + 1 : melhorPos + 1;
+            Array.prototype.splice.apply(caminho, [destino, 0].concat(bloco));
+            melhorou = true;
+          }
+        }
+      }
+    }
+
+    return caminho.slice(1, 1 + n);
+  }
+
+  /** Rota aberta otimizada saindo de "inicio" (e chegando perto de "fim") */
+  function resolver(inicio, nos, fim) {
+    if (nos.length <= 1) return nos.slice();
+    var inicial = vizinhoMaisProximo(inicio, nos);
+    var melhor = melhorar(inicio, inicial, fim);
+    // Tenta também a partir da rota invertida: às vezes cai num resultado melhor
+    var alternativa = melhorar(inicio, inicial.slice().reverse(), fim);
+    var fimLista = fim ? [fim] : [];
+    if (custoCaminho([inicio].concat(alternativa, fimLista)) < custoCaminho([inicio].concat(melhor, fimLista))) {
+      melhor = alternativa;
+    }
+    return melhor;
+  }
+
+  function centroide(pontos) {
+    var lat = 0, lng = 0;
+    pontos.forEach(function(p) { lat += p.lat; lng += p.lng; });
+    return { lat: lat / pontos.length, lng: lng / pontos.length };
+  }
+
+  function chaveCidade(p) {
+    return String(p.cidade || '').trim().toUpperCase() + '|' + String(p.uf || '').trim().toUpperCase();
+  }
+
+  function porTexto(campo) {
+    return function(a, b) { return String(a[campo] || '').localeCompare(String(b[campo] || ''), 'pt-BR'); };
+  }
+
+  /**
+   * Otimiza a ordem das paradas
+   * @param {Object} origem - {lat, lng} ponto de partida
+   * @param {Array} paradas - [{id, cidade, uf, lat, lng, endereco}]
+   * @returns {Object} { ordem: [id], cidades: [nome da cidade na ordem] }
+   */
+  function otimizar(origem, paradas) {
+    // Agrupar por cidade
+    var grupos = {};
+    var ordemChaves = [];
+    paradas.forEach(function(p) {
+      var k = chaveCidade(p);
+      if (!grupos[k]) {
+        grupos[k] = { chave: k, nome: String(p.cidade || '').trim().toUpperCase(), uf: p.uf, paradas: [] };
+        ordemChaves.push(k);
+      }
+      grupos[k].paradas.push(p);
+    });
+
+    var cidades = ordemChaves.map(function(k) { return grupos[k]; });
+    var comCoord = [];
+    var semCoord = [];
+    cidades.forEach(function(c) {
+      var pts = c.paradas.filter(temCoord);
+      if (pts.length) {
+        var centro = centroide(pts);
+        c.lat = centro.lat;
+        c.lng = centro.lng;
+        comCoord.push(c);
+      } else {
+        semCoord.push(c);
+      }
+    });
+
+    var partida = temCoord(origem) ? origem : (comCoord[0] || null);
+
+    // 1. Ordem das cidades
+    var ordemCidades = partida ? resolver(partida, comCoord, null) : comCoord;
+    ordemCidades = ordemCidades.concat(semCoord.sort(porTexto('nome')));
+
+    // 2. Ordem dentro de cada cidade
+    var ordem = [];
+    var atual = partida;
+    ordemCidades.forEach(function(cidade, i) {
+      var pts = cidade.paradas.filter(temCoord);
+      var sem = cidade.paradas.filter(function(p) { return !temCoord(p); }).sort(porTexto('endereco'));
+      var proxima = ordemCidades[i + 1];
+      var fim = proxima && temCoord(proxima) ? { lat: proxima.lat, lng: proxima.lng } : null;
+
+      var rota = atual ? resolver(atual, pts, fim) : pts;
+      rota.concat(sem).forEach(function(p) { ordem.push(p.id); });
+      if (rota.length) atual = rota[rota.length - 1];
+    });
+
+    return {
+      ordem: ordem,
+      cidades: ordemCidades.map(function(c) { return c.nome; })
+    };
+  }
+
+  /**
+   * Estima distância e tempo de uma rota já ordenada
+   * Paradas sem coordenada são ignoradas no cálculo.
+   * @param {Object} origem - {lat, lng}
+   * @param {Array} paradas - na ordem de visita
+   * @returns {Object} { distancia (m), tempo (s), semCoordenada (qtd) }
+   */
+  function estimarRota(origem, paradas) {
+    var distancia = 0;
+    var tempo = 0;
+    var semCoordenada = 0;
+    var anterior = temCoord(origem) ? origem : null;
+
+    paradas.forEach(function(p) {
+      if (!temCoord(p)) { semCoordenada++; return; }
+      if (anterior) {
+        var t = estimarTrecho(anterior, p);
+        distancia += t.distancia;
+        tempo += t.tempo;
+      }
+      anterior = p;
+    });
+
+    return { distancia: distancia, tempo: tempo, semCoordenada: semCoordenada };
+  }
+
+  return {
+    CONFIG: CONFIG,
+    linhaReta: linhaReta,
+    temCoord: temCoord,
+    estimarTrecho: estimarTrecho,
+    otimizar: otimizar,
+    estimarRota: estimarRota,
+    // expostos para testes
+    _melhorar: melhorar,
+    _vizinhoMaisProximo: vizinhoMaisProximo,
+    _custoCaminho: custoCaminho
+  };
+})();
+</script>

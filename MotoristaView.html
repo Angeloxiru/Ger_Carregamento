@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Rota Gaúcha - Motorista</title>
+  <meta name="theme-color" content="#005C26">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Rota Gaúcha">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23007A33'/><text x='50' y='68' font-size='52' text-anchor='middle'>🚚</text></svg>">
+  <?!= include('Base-css'); ?>
+  <?!= include('MotoristaView-css'); ?>
+</head>
+<body>
+  <header class="topo">
+    <div class="topo-conteudo">
+      <div class="marca">
+        <span class="marca-icone">🚚</span>
+        <div>Rota Gaúcha<small id="subtitulo">Área do motorista</small></div>
+      </div>
+      <div class="topo-acoes">
+        <button class="btn btn-topo btn-icone" onclick="Util.alternarTema(); Mapa.aplicarTema()" aria-label="Tema claro ou escuro" title="Tema claro/escuro">◐</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Carregando / erro / sem link -->
+  <section id="telaEstado" class="tela-estado">
+    <div class="girando"></div>
+    <p id="estadoTexto">Abrindo sua carga…</p>
+  </section>
+
+  <main id="app" class="oculto">
+    <!-- Resumo -->
+    <section class="resumo">
+      <div class="resumo-progresso">
+        <div class="resumo-linha">
+          <strong id="progressoTexto">0 de 0 paradas</strong>
+          <span id="progressoPct">0%</span>
+        </div>
+        <div class="progresso"><span id="progressoBarra" style="width:0%"></span></div>
+      </div>
+      <div class="resumo-numeros">
+        <div><span class="rotulo">Falta ≈</span><strong id="kmRestante">–</strong></div>
+        <div><span class="rotulo">Tempo ≈</span><strong id="tempoRestante">–</strong></div>
+        <div><span class="rotulo">Entregas</span><strong id="entregasTexto">–</strong></div>
+        <div><span class="rotulo">Peso</span><strong id="pesoTexto">–</strong></div>
+      </div>
+    </section>
+
+    <div class="layout">
+      <section class="coluna-mapa">
+        <div id="mapaCaixa" class="mapa-caixa">
+          <div id="mapa" class="mapa" role="region" aria-label="Mapa da rota"></div>
+          <button class="btn btn-secundario btn-sm mapa-tamanho" id="btnMapaTamanho" onclick="Tela.alternarMapa()">Compactar mapa</button>
+        </div>
+        <p class="legenda" id="legendaRota"></p>
+      </section>
+
+      <section class="coluna-lista">
+        <div id="avisoOrdem" class="aviso oculto"></div>
+        <div id="listaParadas" class="paradas"></div>
+      </section>
+    </div>
+
+    <!-- Ações fixas no rodapé -->
+    <nav class="barra-inferior" aria-label="Ações da rota">
+      <button class="btn btn-secundario" onclick="Tela.recalcular()" title="Reotimizar as paradas que faltam">↻<span>Recalcular</span></button>
+      <button class="btn btn-azul" onclick="Tela.abrirRotaMaps()" title="Abrir as próximas 4 paradas no Google Maps">🧭<span>Maps</span></button>
+      <button class="btn btn-primario" id="btnSalvar" onclick="Tela.salvar()" title="Gravar esta ordem">💾<span>Salvar</span></button>
+      <button class="btn btn-carregar" id="btnCarregar" onclick="Carregamento.abrir()" title="Gerar o QR code do carregamento">📦<span>Carregar</span></button>
+    </nav>
+
+    <!-- Carregamento: QR code para o coletor -->
+    <div id="modalCarregamento" class="modal" role="dialog" aria-modal="true" aria-labelledby="tituloCarregamento">
+      <div class="cartao modal-caixa modal-qr">
+        <h2 class="modal-titulo" id="tituloCarregamento">Carregamento
+          <button class="btn btn-secundario btn-sm btn-icone" onclick="Carregamento.fechar()" aria-label="Fechar">✕</button>
+        </h2>
+        <div id="qrCorpo" class="qr-corpo">
+          <div class="girando"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rodape">Rota Gaúcha 4.0 · Para ajudar os Tauras da Estrada · Feito pelo Xiru</div>
+  </main>
+
+  <script>
+    window.PARAMS = {
+      carga: '<?= cargaParam ?>',
+      token: '<?= tokenParam ?>',
+      mapsApiKey: '<?= mapsApiKey ?>'
+    };
+  </script>
+  <?!= include('Comum-js'); ?>
+  <?!= include('Roteirizacao-js'); ?>
+  <?!= include('QRCode-js'); ?>
+  <?!= include('MotoristaView-js'); ?>
+</body>
+</html>
